@@ -1,0 +1,19 @@
+[
+  {
+    "name": "Madhuri",
+    "age": "31",
+    "singer_type": "Soprano",
+    "genres_practiced": [
+      "Pop",
+      "Rock",
+      "Broadway"
+    ],
+    "genres_learn": [
+      "Jazz",
+      "R&B"
+    ],
+    "goals": "Improve range",
+    "progress": [],
+    "journal": []
+  }
+]
