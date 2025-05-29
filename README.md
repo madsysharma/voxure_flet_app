@@ -2,6 +2,19 @@
 
 ## Run the app
 
+### Regular method on your PC
+Run as a desktop app:
+
+```
+flet run
+```
+
+Run as a web app:
+
+```
+flet run --web
+```
+
 ### uv
 
 Run as a desktop app:
