@@ -1,4 +1,4 @@
-# VoxureFletApp app
+# Voxure
 
 ## Run the app
 
