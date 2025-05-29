@@ -23,6 +23,9 @@ import time
 import random
 import mediapipe as mp
 from tqdm import tqdm
+import json
+from concurrent.futures import ThreadPoolExecutor
+import multiprocessing
 
 sys.path.append(os.getcwd()+'/MediaPipePyTorch/')
 from blazepose import *
@@ -202,24 +205,50 @@ class MPIIBlazePoseDataset(TensorDataset):
         return img, torch.from_numpy(blaze_kpts)
 
 def extract_pose_keypoints_from_videos(video_dir, out_dir, blazepose_model, device):
+    # Define the activities/labels we want to process
+    activities = ['beatboxing', 'busking', 'playing clarinet', 'playing drums', 'playing flute', 
+                 'playing guitar', 'playing piano', 'playing recorder', 'playing saxophone', 
+                 'playing trombone', 'playing violin', 'recording music', 'singing', 'whistling']
+    
+    blazepose_model.eval()
+    
     for activity in activities:
-        video_files = [f for f in os.listdir(video_dir) if f.endswith('.mp4') or f.endswith('.avi')]
-        blazepose_model.eval()
-        for video_file in tqdm(video_files, desc='Extracting pose from videos'):
-            video_path = os.path.join(video_dir, video_file)
-            out_npy_path = os.path.join(out_dir, os.path.splitext(video_file)[0] + '_pose.npy')
-            cap = cv2.VideoCapture(video_path)
-            keypoints_list = []
-            while True:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                keypoints = get_blazepose_keypoints_from_model(frame, blazepose_model, device)
-                keypoints_list.append(keypoints)
-            cap.release()
-            keypoints_arr = np.stack(keypoints_list) if keypoints_list else np.zeros((1, 33, 3), dtype=np.float32)
-            np.save(out_npy_path, keypoints_arr)
-            print(f"Saved pose keypoints to {out_npy_path}")
+        # Handle both space and underscore versions of the label
+        activity_space = activity
+        activity_underscore = activity.replace(" ", "_")
+        
+        # Check both possible directory paths
+        possible_dirs = [
+            os.path.join(video_dir, activity_space),
+            os.path.join(video_dir, activity_underscore)
+        ]
+        
+        for dir_path in possible_dirs:
+            if not os.path.exists(dir_path):
+                continue
+                
+            # Get all video files in the directory
+            video_files = [f for f in os.listdir(dir_path) if f.endswith('.mp4') or f.endswith('.avi')]
+            
+            for video_file in tqdm(video_files, desc=f'Extracting pose from {activity} videos'):
+                video_path = os.path.join(dir_path, video_file)
+                out_npy_path = os.path.join(out_dir, os.path.splitext(video_file)[0] + '_pose.npy')
+                
+                cap = cv2.VideoCapture(video_path)
+                keypoints_list = []
+                
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    keypoints = get_blazepose_keypoints_from_model(frame, blazepose_model, device)
+                    keypoints_list.append(keypoints)
+                
+                cap.release()
+                keypoints_arr = np.stack(keypoints_list) if keypoints_list else np.zeros((1, 33, 3), dtype=np.float32)
+                np.save(out_npy_path, keypoints_arr)
+                print(f"Saved pose keypoints to {out_npy_path}")
+    
     print('All videos processed.')
 
 def analyze_forward_head(pose):
@@ -320,32 +349,119 @@ class PostureMLP(nn.Module):
 
 def parse_mpii_annotations(mat_file, images_dir, out_dir):
     """
-    Parse the MPII .mat annotation file and save keypoints for each image as .npy files in out_dir.
+    Parse MPII annotations and convert to a more usable format.
+    Optimized version with error handling and parallel processing.
     """
-    mat = scipy.io.loadmat(mat_file)
-    annolist = mat['RELEASE']['annolist'][0,0][0]
+    import scipy.io as sio
+    import numpy as np
+    import os
+    from tqdm import tqdm
+    from concurrent.futures import ThreadPoolExecutor
+    import multiprocessing
+
+    print("Loading MPII annotations...")
+    mat_data = sio.loadmat(mat_file)
+    annotations = mat_data['RELEASE'][0][0]
+    
+    # Create output directory if it doesn't exist
     os.makedirs(out_dir, exist_ok=True)
-    for rec in annolist:
-        img_name = rec['image']['name'][0,0][0]
-        img_path = os.path.join(images_dir, img_name)
-        if not os.path.exists(img_path):
-            continue
-        if rec['annorect'].size == 0:
-            continue
-        for person in rec['annorect'][0]:
-            if 'annopoints' not in person.dtype.fields or person['annopoints'].size == 0:
-                continue
-            keypoints = np.zeros((16, 3), dtype=np.float32)  # 16 keypoints
-            if person['annopoints'][0,0].size > 0:
-                for pt in person['annopoints'][0,0]['point'][0]:
-                    idx = int(pt['id'][0,0])
-                    x = float(pt['x'][0,0])
-                    y = float(pt['y'][0,0])
-                    v = 2  # visible
-                    keypoints[idx] = [x, y, v]
-            base = os.path.splitext(os.path.basename(img_path))[0]
-            np.save(os.path.join(out_dir, f"{base}_keypoints.npy"), keypoints)
-    print(f"Saved keypoints to {out_dir}")
+    
+    # Get number of CPU cores for parallel processing
+    num_cores = max(1, multiprocessing.cpu_count() - 1)
+    
+    def process_single_annotation(idx):
+        try:
+            rec = annotations['annolist'][0][idx]
+            
+            # Safely get image name
+            try:
+                img_name = rec['image']['name'][0][0][0]
+            except (IndexError, KeyError):
+                print(f"Warning: Invalid image name structure for annotation {idx}")
+                return None
+                
+            img_path = os.path.join(images_dir, img_name)
+            
+            # Skip if image doesn't exist
+            if not os.path.exists(img_path):
+                return None
+            
+            # Initialize keypoints array
+            keypoints = np.zeros((16, 3), dtype=np.float32)
+            
+            # Process each person in the image
+            if 'annorect' in rec.dtype.fields and rec['annorect'].size > 0:
+                person = rec['annorect'][0][0]  # Get first person
+                
+                # Check if person has valid annotations
+                if (person is not None and 
+                    'annopoints' in person.dtype.fields and 
+                    person['annopoints'].size > 0 and 
+                    person['annopoints'][0][0] is not None):
+                    
+                    points = person['annopoints'][0][0]
+                    if 'point' in points.dtype.fields:
+                        # Handle both single point and multiple points cases
+                        point_data = points['point']
+                        if point_data.size == 1:  # Single point case
+                            point_data = [point_data[0]]
+                        
+                        for point in point_data:
+                            try:
+                                if point.size > 0:
+                                    # Extract point data with proper array indexing
+                                    x = float(point['x'][0][0][0])
+                                    y = float(point['y'][0][0][0])
+                                    idx = int(point['id'][0][0][0])
+                                    is_visible = float(point['is_visible'][0][0][0]) if 'is_visible' in point.dtype.fields else 1.0
+                                    
+                                    # Validate coordinates
+                                    if np.isnan(x) or np.isnan(y):
+                                        continue
+                                        
+                                    # Ensure index is valid and update keypoints
+                                    if 0 <= idx < 16:
+                                        keypoints[idx] = [x, y, is_visible]
+                                    else:
+                                        print(f"Warning: Invalid keypoint index {idx} in annotation {idx}")
+                            except (IndexError, KeyError, ValueError) as e:
+                                # Only print warning once per annotation
+                                if not hasattr(process_single_annotation, 'warned_annotations'):
+                                    process_single_annotation.warned_annotations = set()
+                                if idx not in process_single_annotation.warned_annotations:
+                                    print(f"Warning: Invalid point data in annotation {idx}: {str(e)}")
+                                    process_single_annotation.warned_annotations.add(idx)
+                                continue
+            
+            # Validate keypoints before saving
+            if np.any(np.isnan(keypoints)):
+                print(f"Warning: NaN values found in keypoints for annotation {idx}")
+                return None
+                
+            # Save keypoints
+            out_path = os.path.join(out_dir, os.path.splitext(img_name)[0] + '.npy')
+            np.save(out_path, keypoints)
+            return img_name
+            
+        except Exception as e:
+            print(f"Error processing annotation {idx}: {str(e)}")
+            return None
+    
+    print(f"Processing annotations using {num_cores} cores...")
+    with ThreadPoolExecutor(max_workers=num_cores) as executor:
+        # Process annotations in parallel with progress bar
+        results = list(tqdm(
+            executor.map(process_single_annotation, range(len(annotations['annolist'][0]))),
+            total=len(annotations['annolist'][0]),
+            desc="Processing annotations"
+        ))
+    
+    # Filter out None results and print summary
+    successful = [r for r in results if r is not None]
+    print(f"\nProcessing complete!")
+    print(f"Successfully processed: {len(successful)}/{len(results)} annotations")
+    
+    return successful
 
 def test_posture_classifier(model_path, pose_dir, batch_size=8, device='cuda'):
     """
@@ -378,3 +494,135 @@ def test_posture_classifier(model_path, pose_dir, batch_size=8, device='cuda'):
                 print("---")
             break
     print("Testing complete.")
+
+def analyze_frame_realtime(frame, blazepose_model, posture_model, device):
+    """
+    Analyze a single frame in real-time and return posture issues and timestamps.
+    Returns: dict with timestamp and detected issues
+    """
+    # Get pose keypoints
+    keypoints = get_blazepose_keypoints_from_model(frame, blazepose_model, device)
+    
+    # Analyze posture issues
+    issues = {
+        "forward_head": analyze_forward_head(keypoints),
+        "flat_back": analyze_flat_back(keypoints),
+        "sway_back": analyze_sway_back(keypoints),
+        "rounded_shoulders": analyze_rounded_shoulders(keypoints),
+        "weak_abdominals": analyze_weak_abdominals(keypoints),
+        "bent_knees": analyze_bent_knees(keypoints),
+        "raised_chest": analyze_raised_chest(keypoints),
+        "bent_neck": analyze_bent_neck(keypoints)
+    }
+    
+    # Get ML model predictions
+    pose_flat = torch.tensor(keypoints[:, :2].flatten(), dtype=torch.float32).unsqueeze(0).to(device)
+    with torch.no_grad():
+        logits = posture_model(pose_flat)
+        probs = torch.sigmoid(logits)
+        preds = (probs > 0.5).cpu().numpy()[0]
+    
+    # Combine manual analysis with ML predictions
+    detected_issues = []
+    for i, (issue, detected) in enumerate(issues.items()):
+        if detected or preds[i]:
+            detected_issues.append(issue)
+    
+    return {
+        "timestamp": time.time(),
+        "issues": detected_issues,
+        "confidence_scores": probs.cpu().numpy()[0]
+    }
+
+def load_critiques():
+    """
+    Load critiques from the JSON file containing blog content
+    Returns: dict with categorized critiques
+    """
+    try:
+        with open('storage/data/vocal_critiques.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        # Return default critiques if file doesn't exist
+        return {
+            "posture": {
+                "forward_head": "Try to keep your head aligned with your shoulders. This helps maintain proper vocal alignment.",
+                "flat_back": "Maintain natural curve in your lower back. This supports better breath control.",
+                "sway_back": "Keep your hips aligned with your shoulders. This helps with overall body balance.",
+                "rounded_shoulders": "Roll your shoulders back and down. This opens up your chest for better breathing.",
+                "weak_abdominals": "Engage your core muscles. This provides better support for your voice.",
+                "bent_knees": "Straighten your knees slightly. This helps maintain proper body alignment.",
+                "raised_chest": "Lower your chest to a neutral position. This allows for more natural breathing.",
+                "bent_neck": "Keep your neck straight and aligned. This helps prevent vocal strain."
+            },
+            "vocal_technique": {
+                "breath_support": "Focus on deep, diaphragmatic breathing. This provides better breath support.",
+                "tension": "Try to release any tension in your jaw and neck. This allows for freer vocal production.",
+                "tone": "Work on maintaining a clear, focused tone. This helps with vocal clarity.",
+                "pitch": "Pay attention to your pitch accuracy. This helps with overall vocal control."
+            },
+            "positive": "Excellent form! Your posture and vocal technique are well-aligned. Keep up the good work!"
+        }
+
+def generate_realtime_critique(analysis_result):
+    """
+    Generate human-readable critique from analysis results using blog content
+    """
+    if not analysis_result["issues"]:
+        return load_critiques()["positive"]
+    
+    critiques = []
+    blog_critiques = load_critiques()
+    
+    for issue in analysis_result["issues"]:
+        if issue in blog_critiques["posture"]:
+            critiques.append(blog_critiques["posture"][issue])
+        elif issue in blog_critiques["vocal_technique"]:
+            critiques.append(blog_critiques["vocal_technique"][issue])
+    
+    if not critiques:
+        return "Good posture and vocal technique! Keep it up!"
+    
+    return "\n".join(critiques)
+
+def process_live_recording(video_capture, blazepose_model, posture_model, device, update_callback=None):
+    """
+    Process live video feed and provide real-time feedback
+    Args:
+        video_capture: cv2.VideoCapture object
+        blazepose_model: BlazePose model for keypoint detection
+        posture_model: PostureMLP model for posture analysis
+        device: torch device
+        update_callback: Function to call with critique updates (timestamp, critique)
+    """
+    frame_count = 0
+    last_critique_time = 0
+    critique_interval = 10.0  # Update critique every 10 seconds
+    last_issues = set()  # Keep track of last reported issues
+    
+    while True:
+        ret, frame = video_capture.read()
+        if not ret:
+            break
+            
+        frame_count += 1
+        current_time = time.time()
+        
+        # Analyze frame
+        analysis = analyze_frame_realtime(frame, blazepose_model, posture_model, device)
+        
+        # Only update critique if:
+        # 1. It's been 10 seconds since the last update
+        # 2. There are new issues detected
+        # 3. The issues are different from the last reported ones
+        if (current_time - last_critique_time >= critique_interval and 
+            analysis["issues"] and 
+            set(analysis["issues"]) != last_issues):
+            
+            critique = generate_realtime_critique(analysis)
+            if update_callback:
+                update_callback(current_time, critique)
+            last_critique_time = current_time
+            last_issues = set(analysis["issues"])
+            
+        yield frame, analysis

@@ -12,8 +12,10 @@ import os
 import random
 from datetime import datetime
 import sys
+import torch
 
 sys.path.append(os.getcwd()+'/src/')
+from models import *
 from vocal_coaching_rag import generate_rag_critique
 
 USER_DATA_FILE = os.getcwd()+"/src/users.json"
@@ -524,44 +526,175 @@ def main(page: ft.Page):
     # --- User Selection Screen ---
     def user_selection_screen():
         users = load_users()
-        user_avatars = [
-            ft.Container(
-                content=ft.Column([
-                    ft.CircleAvatar(
-                        content=ft.Icon(ft.Icons.MUSIC_NOTE, size=40, color=ft.Colors.PURPLE_ACCENT),
-                        radius=40,
-                        bgcolor=ft.Colors.BLUE_ACCENT_100
+        
+        # Create musical note avatars with smiley faces
+        def create_musical_note_avatar(user):
+            # Different note types with embedded smiley faces
+            note_types = [
+                "♪",  # Eighth note
+                "♫",  # Beamed eighth notes
+                "♬",  # Beamed sixteenth notes
+                "♩",  # Quarter note
+                "♭",  # Flat
+                "♮",  # Natural
+                "♯"   # Sharp
+            ]
+            
+            # Create a container for the animated note
+            note_container = ft.Container(
+                content=ft.Stack([
+                    # Musical note
+                    ft.Text(
+                        random.choice(note_types),
+                        size=40,
+                        color=ft.colors.PURPLE_ACCENT,
+                        animate_opacity=ft.Animation(1000, "easeInOut"),
+                        animate_scale=ft.Animation(1000, "easeInOut"),
                     ),
-                    ft.Text(user["name"], size=16, color="#00E5FF", text_align=ft.TextAlign.CENTER)
-                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                on_click=lambda e, u=user: select_user(u),
-                margin=10,
-                tooltip=f"{user['name']} ({user.get('singer_type','?')})"
+                    # Smiley face overlay
+                    ft.Container(
+                        content=ft.Text(
+                            "😊",
+                            size=20,
+                            color=ft.colors.PURPLE_ACCENT,
+                        ),
+                        left=30,  # Position the smiley face on the note
+                        top=15,
+                        animate=ft.animation.Animation(300, "easeInOut"),
+                    ),
+                ]),
+                width=80,
+                height=80,
+                bgcolor=ft.colors.with_opacity(0.1, ft.colors.PURPLE_ACCENT),
+                border_radius=40,
+                animate=ft.animation.Animation(300, "easeInOut"),
+                on_hover=lambda e: on_avatar_hover(e),
+                scale=ft.Scale(1),
+                animate_scale=ft.Animation(300, "easeOutCubic"),
             )
-            for user in users
-        ]
+            
+            # Add hover animation
+            def on_avatar_hover(e):
+                if e.data == "true":
+                    note_container.scale = ft.Scale(1.2)
+                    note_container.bgcolor = ft.colors.with_opacity(0.3, ft.colors.PURPLE_ACCENT)
+                    note_container.shadow = ft.BoxShadow(
+                        spread_radius=2,
+                        blur_radius=15,
+                        color=ft.colors.with_opacity(0.3, ft.colors.PURPLE_ACCENT),
+                        offset=ft.Offset(0, 0),
+                        blur_style=ft.ShadowBlurStyle.NORMAL,
+                    )
+                else:
+                    note_container.scale = ft.Scale(1)
+                    note_container.bgcolor = ft.colors.with_opacity(0.1, ft.colors.PURPLE_ACCENT)
+                    note_container.shadow = None
+                note_container.update()
+            
+            # Add click animation
+            def on_avatar_click(e):
+                note_container.scale = ft.Scale(0.95)
+                note_container.update()
+                time.sleep(0.1)
+                note_container.scale = ft.Scale(1)
+                note_container.update()
+                select_user(user)
+            
+            note_container.on_click = on_avatar_click
+            
+            return ft.Column([
+                note_container,
+                ft.Text(
+                    user["name"],
+                    size=16,
+                    color="#00E5FF",
+                    text_align=ft.TextAlign.CENTER,
+                    weight=ft.FontWeight.W_500,
+                ),
+                ft.Text(
+                    f"({user.get('singer_type', '?')})",
+                    size=12,
+                    color=ft.colors.BLUE_GREY_300,
+                    text_align=ft.TextAlign.CENTER,
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=5,
+            )
+
+        # Create user avatars
+        user_avatars = [create_musical_note_avatar(user) for user in users]
+        
+        # Add user button with a special animation
         add_user_btn = ft.Container(
             content=ft.Column([
-                ft.CircleAvatar(
-                    content=ft.Icon(ft.Icons.ADD, size=40, color=ft.Colors.WHITE),
-                    radius=40,
-                    bgcolor=ft.Colors.PURPLE_ACCENT
+                ft.Container(
+                    content=ft.Icon(
+                        ft.icons.ADD,
+                        size=40,
+                        color=ft.colors.WHITE,
+                    ),
+                    width=80,
+                    height=80,
+                    bgcolor=ft.colors.with_opacity(0.1, ft.colors.GREEN_ACCENT),
+                    border_radius=40,
+                    animate=ft.animation.Animation(300, "easeInOut"),
+                    on_hover=lambda e: on_add_button_hover(e),
+                    scale=ft.Scale(1),
+                    animate_scale=ft.Animation(300, "easeOutCubic"),
                 ),
-                ft.Text("Add User", size=16, color="#00E5FF", text_align=ft.TextAlign.CENTER)
-            ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                ft.Text(
+                    "Add User",
+                    size=16,
+                    color="#00E5FF",
+                    text_align=ft.TextAlign.CENTER,
+                    weight=ft.FontWeight.W_500,
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=5,
+            ),
             on_click=lambda e: page.go("/create_user"),
-            margin=10,
-            tooltip="Add new user"
+            tooltip="Add new user",
         )
+        
+        def on_add_button_hover(e):
+            if e.data == "true":
+                add_user_btn.content.controls[0].scale = ft.Scale(1.1)
+                add_user_btn.content.controls[0].bgcolor = ft.colors.with_opacity(0.2, ft.colors.GREEN_ACCENT)
+            else:
+                add_user_btn.content.controls[0].scale = ft.Scale(1)
+                add_user_btn.content.controls[0].bgcolor = ft.colors.with_opacity(0.1, ft.colors.GREEN_ACCENT)
+            add_user_btn.update()
+
         return ft.View(
             "/users",
             controls=[
                 ft.Column([
-                    ft.Text("Select Your Profile", size=30, weight=ft.FontWeight.BOLD, color="#00E5FF"),
-                    ft.Row(user_avatars + [add_user_btn], alignment=ft.MainAxisAlignment.CENTER, expand=True)
-                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
-            ]
-        )
+                    ft.Text(
+                        "Select Your Profile",
+                        size=30,
+                        weight=ft.FontWeight.BOLD,
+                        color="#00E5FF",
+                        animate_opacity=ft.Animation(500, "easeIn"),
+                    ),
+                    ft.Container(
+                        content=ft.Row(
+                            user_avatars + [add_user_btn],
+                            alignment=ft.MainAxisAlignment.CENTER,
+                            spacing=30,
+                        ),
+                        margin=ft.margin.only(top=40),
+                        animate=ft.animation.Animation(500, "easeIn"),
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                expand=True,
+            )
+        ])
 
     # --- Create User Screen ---
     def create_user_screen():
@@ -616,173 +749,393 @@ def main(page: ft.Page):
 
     # --- Home Screen ---
     def home_screen():
-        def animate():
-            for i in range(101):
-                progress.value = i / 100
-                note_icon.icon = random.choice([ft.Icons.MUSIC_NOTE, ft.Icons.MUSIC_OFF, ft.Icons.AUDIOTRACK])
-                page.update()
-                time.sleep(0.03)
-            dialog.open = False
-            page.update()
-            page.go("/summary")
-
-        overlay = ft.AlertDialog(
-            title=ft.Text("Practice and Learn", size=18, weight=ft.FontWeight.BOLD, color="#00E5FF"),
-            content=ft.Container(
-                width=350,
-                alignment=ft.alignment.center,
-                content=ft.Column([
-                    ft.ElevatedButton(
-                        "Record Yourself",
-                        icon=ft.Icons.VIDEOCAM,
-                        on_click=lambda e: on_record_yourself,
-                        width=250,
-                    ),
-                    ft.ElevatedButton(
-                        "Upload Video",
-                        icon=ft.Icons.UPLOAD_FILE,
-                        on_click=lambda e: on_upload_video,
-                        width=250,
-                    ),
-                ], spacing=12, alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                padding=20,
-                bgcolor="#181A20",
-                border_radius=12,
+        # Create a container for the entire screen with animation
+        screen = ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.Text("Voxure", size=40, weight=ft.FontWeight.BOLD),
+                    ft.Text("Your AI Vocal Coach", size=20),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             ),
-            actions=[ft.TextButton("Cancel", on_click=lambda e: (setattr(overlay, 'open', False), page.update()))],
-            actions_alignment=ft.MainAxisAlignment.END,
-            shape=ft.RoundedRectangleBorder(radius=12),
-            on_dismiss=lambda e: print("Dialog dismissed!"),
-            title_padding=ft.padding.all(25),
+            animate=ft.animation.Animation(300, ft.AnimationCurve.EASE_IN),
+            opacity=0,
         )
 
-        def on_record_yourself(e):
-            setattr(overlay, 'open', False)
-            page.update()
-            # Wait a short moment before navigating
-            def delayed_nav():
-                time.sleep(0.1)
-                page.go("/record")
-            threading.Thread(target=delayed_nav, daemon=True).start()
+        # Create animated containers for each section with directional animations
+        def create_animated_section(content, delay=0, direction="up"):
+            offset_map = {
+                "up": ft.transform.Offset(0, 0.2),
+                "left": ft.transform.Offset(-0.2, 0),
+                "right": ft.transform.Offset(0.2, 0),
+                "down": ft.transform.Offset(0, -0.2)
+            }
+            return ft.Container(
+                content=content,
+                animate=ft.animation.Animation(300, ft.AnimationCurve.EASE_IN),
+                opacity=0,
+                animate_opacity=300,
+                animate_offset=ft.Offset(0, 0),
+                offset=offset_map.get(direction, ft.transform.Offset(0, 0.2)),
+            )
 
-        def on_upload_video(e):
-            setattr(overlay, 'open', False)
-            page.update()
-            page.open(dialog) 
-            threading.Thread(target=animate, daemon=True).start()
-            
-            # Wait a short moment before navigating
-            def delayed_nav():
-                time.sleep(0.1)
-                page.go("/record")
-
-            threading.Thread(target=delayed_nav, daemon=True).start()
-
-        progress = ft.ProgressBar(width=300)
-        note_icon = ft.Icon(ft.Icons.MUSIC_NOTE, size=40, color=ft.Colors.PURPLE_ACCENT)
-        dialog = ft.AlertDialog(
-            title=ft.Text("Uploading and Analyzing..."),
-            content=ft.Column([
-                progress,
-                note_icon,
-                ft.Text("Analyzing your performance...", size=16)
-            ], spacing=20,),
-            on_dismiss=lambda e: print("Dialog dismissed!"), 
-            title_padding=ft.padding.all(25),
-        )
-        
-        user = page.session.get("selected_user")
-        # Left: Navigation
-        nav_buttons = ft.Column([
-            ft.ElevatedButton("Practice and Learn", icon=ft.Icons.MIC, on_click=lambda e: page.open(overlay)),
-            ft.ElevatedButton("Your Vocal Journal", icon=ft.Icons.BOOK, on_click=lambda e: page.go("/journal")),
-        ], alignment=ft.MainAxisAlignment.START, spacing=20)
-        # Right: Progress plot (placeholder image)
-        progress_plot = ft.Image(
-            src="https://quickchart.io/chart?c={type:'line',data:{labels:['Jan','Feb','Mar'],datasets:[{label:'Progress',data:[1,2,3]}]}}",
-            width=400, height=300, fit=ft.ImageFit.CONTAIN
-        )
-        return ft.View(
-            "/home",
-            controls=[
-                ft.Row([
-                    ft.Container(nav_buttons, width=250, bgcolor="#23272F", border_radius=10, padding=20),
-                    ft.VerticalDivider(width=20),
+        # Progress section with animation from right
+        progress_section = create_animated_section(
+            ft.Column(
+                controls=[
+                    ft.Text("Your Progress", size=24, weight=ft.FontWeight.BOLD),
                     ft.Container(
-                        ft.Column([
-                            ft.Text(f"Welcome, {user['name']}!", size=24, color="#00E5FF"),
-                            ft.Text(f"Singer Type: {user['singer_type']}", color="#00E5FF"),
-                            ft.Text("Your Progress", size=18, color="#00E5FF"),
-                            progress_plot
-                        ], spacing=10),
-                        expand=True, bgcolor="#181A20", border_radius=10, padding=20
-                    )
-                ], expand=True, alignment=ft.MainAxisAlignment.CENTER)
-            ]
+                        content=ft.ProgressBar(width=400, color=ft.colors.BLUE),
+                        animate=ft.animation.Animation(300, ft.AnimationCurve.EASE_IN),
+                        opacity=0,
+                    ),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            delay=100,
+            direction="right"
         )
+
+        # Quick actions with animation from left
+        quick_actions = create_animated_section(
+            ft.Row(
+                controls=[
+                    ft.ElevatedButton(
+                        "Start Practice",
+                        icon=ft.icons.PLAY_ARROW,
+                        on_click=lambda _: page.go("/practice"),
+                        style=ft.ButtonStyle(
+                            shape=ft.RoundedRectangleBorder(radius=10),
+                            padding=20,
+                        ),
+                        on_hover=lambda e: on_button_hover(e),
+                        scale=ft.Scale(1),
+                        animate_scale=ft.Animation(300, "easeOutCubic"),
+                    ),
+                    ft.ElevatedButton(
+                        "View History",
+                        icon=ft.icons.HISTORY,
+                        on_click=lambda _: page.go("/history"),
+                        style=ft.ButtonStyle(
+                            shape=ft.RoundedRectangleBorder(radius=10),
+                            padding=20,
+                        ),
+                        on_hover=lambda e: on_button_hover(e),
+                        scale=ft.Scale(1),
+                        animate_scale=ft.Animation(300, "easeOutCubic"),
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+                spacing=20,
+            ),
+            delay=200,
+            direction="left"
+        )
+
+        # Recent activity with animation from bottom
+        recent_activity = create_animated_section(
+            ft.Column(
+                controls=[
+                    ft.Text("Recent Activity", size=24, weight=ft.FontWeight.BOLD),
+                    ft.ListView(
+                        controls=[
+                            ft.ListTile(
+                                leading=ft.Icon(ft.icons.MUSIC_NOTE),
+                                title=ft.Text("Practice Session"),
+                                subtitle=ft.Text("30 minutes"),
+                            ),
+                            ft.ListTile(
+                                leading=ft.Icon(ft.icons.ASSESSMENT),
+                                title=ft.Text("Progress Report"),
+                                subtitle=ft.Text("2 hours ago"),
+                            ),
+                        ],
+                        spacing=10,
+                        height=200,
+                    ),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            delay=300,
+            direction="down"
+        )
+
+        # Exit button with animation
+        exit_button = create_animated_section(
+            ft.ElevatedButton(
+                "Exit to Main Screen",
+                icon=ft.icons.EXIT_TO_APP,
+                on_click=lambda _: page.go("/users"),
+                style=ft.ButtonStyle(
+                    shape=ft.RoundedRectangleBorder(radius=10),
+                    padding=20,
+                    color=ft.colors.RED_400,
+                ),
+                on_hover=lambda e: on_button_hover(e),
+                scale=ft.Scale(1),
+                animate_scale=ft.Animation(300, "easeOutCubic"),
+            ),
+            delay=400,
+            direction="up"
+        )
+
+        # Practice tip section with animation
+        practice_tip = create_animated_section(
+            ft.Container(
+                content=ft.Column([
+                    ft.Text("Today's Practice Tip", size=20, weight=ft.FontWeight.BOLD),
+                    ft.Container(
+                        content=ft.Text(
+                            '"Focus on maintaining proper breath support by engaging your diaphragm. '
+                            'This will help you achieve better vocal control and reduce strain."',
+                            size=16,
+                            italic=True,
+                            text_align=ft.TextAlign.CENTER,
+                        ),
+                        padding=20,
+                        bgcolor=ft.colors.with_opacity(0.1, ft.colors.BLUE_ACCENT),
+                        border_radius=10,
+                    ),
+                ]),
+                margin=ft.margin.only(top=20),
+            ),
+            delay=500,
+            direction="up"
+        )
+
+        # Add all sections to the main column
+        screen.content.controls.extend([
+            progress_section,
+            quick_actions,
+            recent_activity,
+            practice_tip,
+            exit_button,
+        ])
+
+        # Function to handle button hover animation
+        def on_button_hover(e):
+            e.control.scale = ft.Scale(1.05 if e.data == "true" else 1)
+            e.control.update()
+
+        # Function to trigger animations
+        def start_animations():
+            screen.opacity = 1
+            screen.update()
+            
+            # Trigger animations for each section with delay
+            sections = [progress_section, quick_actions, recent_activity, practice_tip, exit_button]
+            for i, section in enumerate(sections):
+                def animate_section(section=section):
+                    section.opacity = 1
+                    section.offset = ft.transform.Offset(0, 0)
+                    section.update()
+                
+                # Schedule animations with delay
+                page.window_to_front()
+                page.update()
+                time.sleep(0.1 * (i + 1))
+                animate_section()
+
+        # Start animations when the page loads
+        page.on_load = start_animations
+
+        return screen
+
+    def check_user_progress(user):
+        """
+        Check if the user has any progress data in their journal entries
+        Returns: bool indicating if progress exists
+        """
+        journal = load_journal()
+        user_entries = [entry for entry in journal if entry["user"] == user["name"]]
+        return len(user_entries) > 0
+
+    def get_progress_data(user):
+        """
+        Get progress data from user's journal entries
+        Returns: tuple of (dates, scores) for plotting
+        """
+        journal = load_journal()
+        user_entries = [entry for entry in journal if entry["user"] == user["name"]]
+        
+        dates = []
+        scores = []
+        cumulative_score = 0
+        
+        for entry in user_entries:
+            dates.append(entry["date"].split()[0])  # Get just the date part
+            
+            # Calculate posture score
+            posture_score = 0
+            posture_keywords = {
+                "good posture": 1,
+                "excellent posture": 1,
+                "poor posture": -1,
+                "slouching": -1,
+                "forward head": -1,
+                "rounded shoulders": -1,
+                "sway back": -1,
+                "flat back": -1,
+                "weak abdominals": -1,
+                "bent knees": -1,
+                "raised chest": -1,
+                "bent neck": -1
+            }
+            
+            summary = entry["summary"].lower()
+            for keyword, value in posture_keywords.items():
+                if keyword in summary:
+                    posture_score += value
+            
+            # Calculate vocal technique score
+            vocal_score = 0
+            vocal_keywords = {
+                "good breath support": 1,
+                "excellent breath support": 1,
+                "strong voice": 1,
+                "clear tone": 1,
+                "poor breath support": -1,
+                "weak voice": -1,
+                "strained voice": -1,
+                "pitch issues": -1,
+                "tone issues": -1,
+                "vocal tension": -1,
+                "jaw tension": -1,
+                "tongue tension": -1
+            }
+            
+            for keyword, value in vocal_keywords.items():
+                if keyword in summary:
+                    vocal_score += value
+            
+            # Combine scores with equal weight
+            combined_score = (posture_score + vocal_score) / 2
+            
+            # Add to cumulative score
+            cumulative_score += combined_score
+            scores.append(cumulative_score)
+        
+        # Normalize scores to be between -1 and 1
+        if scores:
+            max_abs_score = max(abs(min(scores)), abs(max(scores)))
+            if max_abs_score > 0:
+                scores = [score / max_abs_score for score in scores]
+        
+        return dates, scores
 
     # --- Recording Screen ---
     def recording_screen():
-        # Placeholder for video capture and controls
-        genre_dd = ft.Dropdown(label="Genre", options=[ft.dropdown.Option(x) for x in ["Pop", "Rock", "Jazz", "Classical", "Broadway", "Alternative"]])
-        pitch_dd = ft.Dropdown(label="Pitch", options=[ft.dropdown.Option(x) for x in ["Low", "Medium", "High"]])
-        scale_dd = ft.Dropdown(label="Scale", options=[ft.dropdown.Option(x) for x in ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']])
-        singer_dd = ft.Dropdown(label="Singer Type", options=[ft.dropdown.Option(x) for x in ["Soprano", "Alto", "Tenor", "Bass"]])
-        record_btn = ft.ElevatedButton("Record", icon=ft.Icons.FIBER_MANUAL_RECORD, on_click=lambda e: show_critique_panel())
-        pause_btn = ft.ElevatedButton("Pause/Resume", icon=ft.Icons.PAUSE, on_click=lambda e: show_critique_panel())
-        stop_btn = ft.ElevatedButton("Stop", icon=ft.Icons.STOP, on_click=lambda e: page.go("/summary"))
-        controls = ft.Row([record_btn, pause_btn, stop_btn], alignment=ft.MainAxisAlignment.CENTER, spacing=20)
-        video_placeholder = ft.Container(
-            content=ft.Image(src="https://via.placeholder.com/400x300?text=Video+Capture", width=400, height=300),
-            alignment=ft.alignment.center,
+        # Create feedback panel
+        feedback_panel = ft.Container(
+            content=ft.Column([
+                ft.Text("Real-time Feedback", size=20, weight=ft.FontWeight.BOLD),
+                ft.Divider(),
+                ft.Text("Waiting for analysis...", id="feedback_text"),
+                ft.Text("Timestamp: --:--", id="feedback_timestamp")
+            ]),
             bgcolor="#23272F",
+            border=ft.border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.BLUE_ACCENT_100)),
+            border_radius=10,
+            padding=20,
+            width=300
+        )
+        
+        # Create video display
+        video_display = ft.Container(
+            content=ft.Image(
+                src="https://via.placeholder.com/640x480?text=No+Video",
+                width=640,
+                height=480,
+                fit=ft.ImageFit.CONTAIN
+            ),
+            bgcolor="#23272F",
+            border=ft.border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.BLUE_ACCENT_100)),
             border_radius=10,
             padding=10
         )
-        dropdowns = ft.Row([genre_dd, pitch_dd, scale_dd, singer_dd], alignment=ft.MainAxisAlignment.CENTER, spacing=20)
-        return ft.View(
-            "/record",
-            controls=[
-                ft.Column([
-                    video_placeholder,
-                    dropdowns,
-                    controls
-                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
-            ]
-        )
-
-    # --- Critique Panel (side panel with chat bubbles) ---
-    def show_critique_panel():
-        critique_bubbles = [
-            {"timestamp": "00:12", "critique": "Watch your posture!"},
-            {"timestamp": "00:34", "critique": "Try to relax your jaw."},
-            {"timestamp": "01:10", "critique": "Good breath support here!"},
-        ]
-        chat_bubbles = [
-            ft.Container(
-                content=ft.Row([
-                    ft.Text(cb["timestamp"], size=12, color=ft.Colors.BLUE_GREY_200),
-                    ft.Container(
-                        content=ft.Text(cb["critique"], size=14, color=ft.Colors.WHITE),
-                        bgcolor="#3D3D5C" if i % 2 == 0 else "#2D2D3C",
-                        border_radius=8,
-                        padding=10,
-                        margin=ft.margin.only(left=10)
-                    )
-                ], alignment=ft.MainAxisAlignment.START),
-                margin=ft.margin.only(bottom=8)
+        
+        # Create controls
+        controls = ft.Row([
+            ft.ElevatedButton(
+                "Start Recording",
+                icon=ft.icons.PLAY_ARROW,
+                on_click=lambda e: start_recording(e, video_display, feedback_panel)
+            ),
+            ft.ElevatedButton(
+                "Stop Recording",
+                icon=ft.icons.STOP,
+                on_click=lambda e: stop_recording(e, video_display, feedback_panel)
             )
-            for i, cb in enumerate(critique_bubbles)
-        ]
-        side_panel = ft.AlertDialog(
-            modal=False,
-            title=ft.Text("Vocal Critique"),
-            content=ft.Column(chat_bubbles, scroll=ft.ScrollMode.AUTO, height=200),
-            actions=[ft.TextButton("Close", on_click=lambda e: (page.dialog.close(), page.update()))]
-        )
-        page.dialog = side_panel
-        side_panel.open = True
-        page.update()
+        ])
+        
+        # Main layout
+        content = ft.Row([
+            ft.Column([video_display, controls], spacing=20),
+            feedback_panel
+        ], spacing=20)
+        
+        return content
+
+    def start_recording(e, video_display, feedback_panel):
+        # Initialize camera
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            print("Error: Could not open camera")
+            return
+        
+        # Initialize models
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        blazepose_model = load_blazepose_model().to(device)
+        posture_model = PostureMLP().to(device)
+        posture_model.load_state_dict(torch.load("best_posture_estimator_model.pth"))
+        
+        def update_feedback(timestamp, critique):
+            # Update the feedback text with timestamp
+            feedback_panel.content.controls[2].value = critique
+            feedback_panel.content.controls[3].value = f"Last updated: {timestamp:.1f}s"
+            
+            # Add a subtle animation to highlight the update
+            feedback_panel.border = ft.border.all(2, ft.Colors.BLUE_ACCENT_100)
+            feedback_panel.update()
+            
+            # Reset the border after a short delay
+            def reset_border():
+                time.sleep(0.5)
+                feedback_panel.border = ft.border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.BLUE_ACCENT_100))
+                feedback_panel.update()
+            
+            threading.Thread(target=reset_border, daemon=True).start()
+        
+        def process_frame():
+            last_update_time = 0
+            for frame, analysis in process_live_recording(cap, blazepose_model, posture_model, device, update_feedback):
+                current_time = time.time()
+                
+                # If no issues are detected and it's been 10 seconds since last update,
+                # show a positive feedback message
+                if not analysis["issues"] and current_time - last_update_time >= 10.0:
+                    update_feedback(current_time, "Good posture and vocal technique! Keep it up!")
+                    last_update_time = current_time
+                
+                # Convert frame to base64 for display
+                _, buffer = cv2.imencode('.jpg', frame)
+                img_base64 = base64.b64encode(buffer).decode('utf-8')
+                video_display.content.src = f"data:image/jpeg;base64,{img_base64}"
+                video_display.update()
+        
+        # Start processing in a separate thread
+        import threading
+        processing_thread = threading.Thread(target=process_frame)
+        processing_thread.start()
+
+    def stop_recording(e, video_display, feedback_panel):
+        # Stop camera and processing
+        cap.release()
+        video_display.content.src = "https://via.placeholder.com/640x480?text=No+Video"
+        video_display.update()
+        feedback_panel.content.controls[2].value = "Recording stopped"
+        feedback_panel.content.controls[3].value = "Timestamp: --:--"
+        feedback_panel.update()
 
     # --- Summary Screen ---
     def summary_screen():
