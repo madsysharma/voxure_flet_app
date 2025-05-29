@@ -11,6 +11,10 @@ import json
 import os
 import random
 from datetime import datetime
+import sys
+
+sys.path.append(os.getcwd()+'/src/')
+from vocal_coaching_rag import generate_rag_critique
 
 USER_DATA_FILE = os.getcwd()+"/src/users.json"
 JOURNAL_DATA_FILE = os.getcwd()+"/src/journal.json"
@@ -62,9 +66,11 @@ def main(page: ft.Page):
     page.fonts = {
         "Roboto": "https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap",
         "Exo2": "https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;700&display=swap",
-        "RobotoMono": "https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap"
+        "RobotoMono": "https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap",
+        "Playfair Display": "https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap",
+        "Libre Baskerville": "https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap"
     }
-    page.theme = ft.Theme(font_family="Roboto")
+    page.theme = ft.Theme(font_family="Playfair Display")
 
     # State
     camera_active = False
@@ -92,6 +98,31 @@ def main(page: ft.Page):
             else:
                 feedback_text_area.value += "\nFailed to load video frame."
             feedback_text_area.update()
+
+            # --- Prompt user for lyrics and performance description ---
+            lyrics_field = ft.TextField(label="Lyrics", multiline=True, width=400)
+            desc_field = ft.TextField(label="Performance Description", multiline=True, width=400)
+            def on_submit_critique(ev):
+                lyrics = lyrics_field.value
+                performance_description = desc_field.value
+                # Optionally, auto-extract from video/audio here
+                # lyrics, performance_description = auto_extract(uploaded_video_path)
+                feedback_text_area.value = "Generating AI critique..."
+                feedback_text_area.update()
+                critique, entry = invoke_critique(lyrics, performance_description, video_path=uploaded_video_path)
+                feedback_text_area.value = f"AI Critique:\n{critique}"
+                feedback_text_area.update()
+                page.dialog.open = False
+                page.update()
+            dialog = ft.AlertDialog(
+                title=ft.Text("Enter Performance Details"),
+                content=ft.Column([lyrics_field, desc_field]),
+                actions=[ft.TextButton("Submit", on_click=on_submit_critique)],
+                actions_alignment=ft.MainAxisAlignment.END,
+            )
+            page.dialog = dialog
+            dialog.open = True
+            page.update()
         else:
             feedback_text_area.value = "Video selection cancelled."
             feedback_text_area.update()
@@ -124,7 +155,7 @@ def main(page: ft.Page):
         # Adding some theming for dropdowns
         border_color=ft.Colors.BLUE_ACCENT_100,
         focused_border_color=ft.Colors.PURPLE_ACCENT,
-        label_style=ft.TextStyle(font_family="Roboto"),
+        label_style=ft.TextStyle(font_family="Playfair Display"),
         # content_padding=10 # Flet dropdowns might not have direct content_padding like this for options
     )
 
@@ -138,7 +169,7 @@ def main(page: ft.Page):
         width=200,
         border_color=ft.Colors.BLUE_ACCENT_100,
         focused_border_color=ft.Colors.PURPLE_ACCENT,
-        label_style=ft.TextStyle(font_family="Roboto"),
+        label_style=ft.TextStyle(font_family="Playfair Display"),
     )
 
     dd_range = ft.Dropdown(
@@ -151,7 +182,7 @@ def main(page: ft.Page):
         width=200,
         border_color=ft.Colors.BLUE_ACCENT_100,
         focused_border_color=ft.Colors.PURPLE_ACCENT,
-        label_style=ft.TextStyle(font_family="Roboto"),
+        label_style=ft.TextStyle(font_family="Playfair Display"),
     )
 
     config_controls = ft.Row(
@@ -296,14 +327,14 @@ def main(page: ft.Page):
         "Posture analysis, vocal feedback, and personalized suggestions will appear here...",
         size=14,
         italic=True,
-        font_family="Roboto",
+        font_family="Playfair Display",
         color=ft.Colors.BLUE_GREY_200
     )
     
     feedback_container = ft.Container(
         content=ft.Column(
             controls=[
-                ft.Text("Real-time Feedback & Coaching", size=20, weight=ft.FontWeight.BOLD, font_family="Exo2", color=ft.Colors.CYAN_ACCENT_100),
+                ft.Text("Real-time Feedback & Coaching", size=20, weight=ft.FontWeight.BOLD, font_family="Playfair Display", color=ft.Colors.CYAN_ACCENT_100),
                 ft.Divider(color=ft.Colors.with_opacity(0.5, ft.Colors.BLUE_ACCENT_100)),
                 feedback_text_area
             ],
@@ -344,7 +375,7 @@ def main(page: ft.Page):
     def create_placeholder_container(title_text, content_widget=None):
         return ft.Container(
             content=ft.Column([
-                ft.Text(title_text, theme_style=ft.TextThemeStyle.TITLE_MEDIUM, font_family="Exo2", color=ft.Colors.LIGHT_BLUE_100),
+                ft.Text(title_text, theme_style=ft.TextThemeStyle.TITLE_MEDIUM, font_family="Playfair Display", color=ft.Colors.LIGHT_BLUE_100),
                 ft.Divider(color=ft.Colors.with_opacity(0.3, ft.Colors.BLUE_ACCENT_100)),
                 content_widget if content_widget else ft.Container(height=5) # Minimal content if none provided
             ]),
@@ -357,7 +388,7 @@ def main(page: ft.Page):
 
     progress_tracker_placeholder = create_placeholder_container(
         "Progress Tracker Area",
-        ft.Text("Your improvements and session history will be shown here.", font_family="Roboto", color=ft.Colors.BLUE_GREY_300)
+        ft.Text("Your improvements and session history will be shown here.", font_family="Playfair Display", color=ft.Colors.BLUE_GREY_300)
     )
     
     warmup_exercises_placeholder = create_placeholder_container(
@@ -373,13 +404,13 @@ def main(page: ft.Page):
 
     community_features_placeholder = create_placeholder_container(
         "Community Features (Blog, Messaging, etc.)",
-        ft.Text("Connect with others, share insights, and get expert advice.", font_family="Roboto", color=ft.Colors.BLUE_GREY_300)
+        ft.Text("Connect with others, share insights, and get expert advice.", font_family="Playfair Display", color=ft.Colors.BLUE_GREY_300)
     )
 
     other_features_column = ft.Column(
         controls=[
             ft.Divider(height=20, thickness=1, color=ft.Colors.with_opacity(0.5, ft.Colors.BLUE_ACCENT_200)),
-            ft.Text("More Tools & Features", theme_style=ft.TextThemeStyle.HEADLINE_SMALL, font_family="Exo2", color=ft.Colors.CYAN_ACCENT_200),
+            ft.Text("More Tools & Features", theme_style=ft.TextThemeStyle.HEADLINE_SMALL, font_family="Playfair Display", color=ft.Colors.CYAN_ACCENT_200),
             progress_tracker_placeholder,
             warmup_exercises_placeholder,
             community_features_placeholder
@@ -403,10 +434,10 @@ def main(page: ft.Page):
     # --- Overall Page Layout ---
     page_content = ft.Column(
         controls=[
-            ft.Text("VOXURE", theme_style=ft.TextThemeStyle.DISPLAY_SMALL, weight=ft.FontWeight.BOLD, font_family="Exo2", color="#00E5FF",
-                      spans=[ft.TextSpan("™", ft.TextStyle(size=12, font_family="Exo2", color="#00E5FF", weight=ft.FontWeight.NORMAL))]
+            ft.Text("VOXURE", theme_style=ft.TextThemeStyle.DISPLAY_SMALL, weight=ft.FontWeight.BOLD, font_family="Playfair Display", color="#00E5FF",
+                      spans=[ft.TextSpan("™", ft.TextStyle(size=12, font_family="Playfair Display", color="#00E5FF", weight=ft.FontWeight.NORMAL))]
             ),
-            ft.Text("Your Personal AI Vocal Coach", theme_style=ft.TextThemeStyle.TITLE_LARGE, font_family="Exo2", color=ft.Colors.BLUE_GREY_100, weight=ft.FontWeight.W_300, text_align=ft.TextAlign.CENTER),
+            ft.Text("Your Personal AI Vocal Coach", theme_style=ft.TextThemeStyle.TITLE_LARGE, font_family="Playfair Display", color=ft.Colors.BLUE_GREY_100, weight=ft.FontWeight.W_300, text_align=ft.TextAlign.CENTER),
             ft.Divider(height=30, thickness=1, color=ft.Colors.with_opacity(0.7, ft.Colors.BLUE_ACCENT_700)),
             main_content,
         ],
