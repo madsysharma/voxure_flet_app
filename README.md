@@ -82,3 +82,8 @@ For more details on building Windows package, refer to the [Windows Packaging Gu
 
 
 ## Install dependencies
+
+```
+pip install --no-cache-dir -r src/requirements.txt
+pip install --upgrade -r src/requirements.txt
+```
