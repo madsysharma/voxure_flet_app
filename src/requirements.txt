@@ -22,3 +22,4 @@ llama-cpp-python
 bs4
 transformers
 sentence-transformers
+ffmpeg[all]
