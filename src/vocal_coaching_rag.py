@@ -15,7 +15,10 @@ import json
 import sys
 import shutil
 sys.path.append(os.getcwd()+'/models.py')
+sys.path.append('../MediaPipePyTorch/')
 from models import *
+from blazepose import *
+from blazepose_landmark import *
 
 # ========== CONFIGURATION ==========
 BLOG_SITES = [
@@ -241,6 +244,9 @@ def generate_rag_critique(lyrics, performance_description, video_path=None):
 def invoke_critique(lyrics, perf_description, video_path=None):
     # 1. Load the models and predict the performance quality frame-by-frame
     submitted_video = VideoFileClip(video_path)
+    save_op_video_dir = os.getcwd()+'/storage/output/videos'
+    if not os.path.exists(save_op_video_dir):
+        os.makedirs(save_op_video_dir, exist_ok=True)
     video_folder_name = (video_path.split('/')[-1]).split('.')[0]
 
     # Extract the audio
@@ -258,22 +264,35 @@ def invoke_critique(lyrics, perf_description, video_path=None):
     tensor_x = torch.tensor(features, dtype=torch.float32)
     input_dim = features.shape[1]
     audio_model = MultiLabelAudioRegressor(input_dim=input_dim, num_tasks=6, dropout=0.5)
-    preds = get_prediction_regression(audio_model, tensor_x, 'cpu', quality_list)
+    preds_audio = get_predictions_regression(audio_model, tensor_x, 'cpu', quality_list)
 
     # Get posture keypoints
+    blazepose_model = BlazePose().to('cpu')
+    blazepose_model.load_state_dict(torch.load(os.getcwd()+'/best_blazepose_model.pth'))
+    blazepose_model.eval()
+    device = torch.device('cpu')
+    pose_out_dir = os.getcwd()+'/'+video_folder_name+'/Pose Keypoints/'
+    if not os.path.exists(pose_out_dir):
+        os.makedirs(pose_out_dir, exist_ok=True)
+    extract_pose_keypoints_from_videos(save_op_video_dir, pose_out_dir, blazepose_model, device)
+    pose_classifier = PostureMLP(input_dim=66, num_labels=8).to('cpu')
+    pose_classifier.load_state_dict(torch.load(os.getcwd()+'/best_posture_estimator_model.pth', map_location=device))
+    pose_classifier.eval()
+    preds_posture = test_posture_classifier(pose_classifier, pose_out_dir, device)
+
 
     # 2. Feed lyrics and performance description to RAG critique generator
     singing_lyrics = lyrics
     performance_description = perf_description
 
     # 3. Call the new RAG function for backward compatibility
-    critique, entry = generate_rag_critique(singing_lyrics, performance_description, uploaded_video_path)
+    critique, entry = generate_rag_critique(singing_lyrics, performance_description, submitted_video)
     print(f"Critique:\n{critique}\n")
 
     # 4. Generate Narration with Nari Dia
     print("Generating narration with Nari Dia...")
     model = Dia.from_pretrained("nari-labs/Dia-1.6B")
-    narration_audio = model.generate(critique_text)
+    narration_audio = model.generate(critique)
     sf.write(NARRATION_WAV, narration_audio, 44100)
 
     # 5. Generate Singing Audio with DiffSinger

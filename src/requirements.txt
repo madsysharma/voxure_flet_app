@@ -1,3 +1,6 @@
+flet[all]
+flet-rive
+flet-lottie
 torch
 torchvision
 torchaudio
