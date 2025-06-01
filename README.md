@@ -1,19 +1,6 @@
-# Voxure
+# VoxureFletApp app
 
 ## Run the app
-
-### Regular method on your PC
-Run as a desktop app:
-
-```
-flet run
-```
-
-Run as a web app:
-
-```
-flet run --web
-```
 
 ### uv
 
@@ -92,11 +79,3 @@ flet build windows -v
 ```
 
 For more details on building Windows package, refer to the [Windows Packaging Guide](https://flet.dev/docs/publish/windows/).
-
-
-## Install dependencies
-
-```
-pip install --no-cache-dir -r src/requirements.txt
-pip install --upgrade -r src/requirements.txt
-```

@@ -23,3 +23,4 @@ bs4
 transformers
 sentence-transformers
 ffmpeg[all]
+datasets

@@ -6,7 +6,6 @@ import os
 import soundfile as sf
 from moviepy import VideoFileClip, AudioFileClip
 from moviepy.audio.AudioClip import concatenate_audioclips
-from dia.model import Dia
 from datasets import load_dataset
 from sentence_transformers import SentenceTransformer, util
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -15,10 +14,13 @@ import json
 import sys
 import shutil
 sys.path.append(os.getcwd()+'/models.py')
+sys.path.append('../dia/dia/')
+sys.path.append('../DiffSinger/')
 sys.path.append('../MediaPipePyTorch/')
+sys.path.append('../stable-diffusion-webui/extensions/deforum/scripts/')
 from models import *
-from blazepose import *
-from blazepose_landmark import *
+from deforum import *
+from model import *
 
 # ========== CONFIGURATION ==========
 BLOG_SITES = [
@@ -165,88 +167,39 @@ Critique:
     return llm(prompt)
 
 def generate_rag_critique(lyrics, performance_description, video_path=None):
-    # 1. Load critiques from JSON file
-    try:
-        with open('storage/data/vocal_critiques.json', 'r') as f:
-            blog_critiques = json.load(f)
-    except FileNotFoundError:
-        # If file doesn't exist, scrape and save critiques
-        blog_critiques = scrape_and_save_critiques()
+    # 1. Scrape articles from all blogs
+    all_articles = []
+    for site in BLOG_SITES:
+        articles = scrape_blog(site["url"], site["article_selector"], site["content_selector"])
+        for art in articles:
+            art["source"] = site["name"]
+        all_articles.extend(articles)
+        time.sleep(1)
+    if not all_articles:
+        return "No articles scraped. Exiting.", None
     
-    # 2. Analyze performance description for issues
-    detected_issues = {
-        "posture": [],
-        "vocal_technique": []
-    }
-    
-    # Check for posture issues
-    for issue in blog_critiques["posture"].keys():
-        if issue.lower() in performance_description.lower():
-            detected_issues["posture"].append(issue)
-    
-    # Check for vocal technique issues
-    for issue in blog_critiques["vocal_technique"].keys():
-        if issue.lower() in performance_description.lower():
-            detected_issues["vocal_technique"].append(issue)
-    
-    # 3. Generate personalized critique
-    critique_parts = []
-    
-    # Add posture feedback
-    if detected_issues["posture"]:
-        critique_parts.append("Posture Analysis:")
-        for issue in detected_issues["posture"]:
-            if issue in blog_critiques["posture"]:
-                critique_parts.append(f"- {blog_critiques['posture'][issue]}")
-    else:
-        critique_parts.append("Posture: " + blog_critiques["positive"])
-    
-    # Add vocal technique feedback
-    if detected_issues["vocal_technique"]:
-        critique_parts.append("\nVocal Technique Analysis:")
-        for issue in detected_issues["vocal_technique"]:
-            if issue in blog_critiques["vocal_technique"]:
-                critique_parts.append(f"- {blog_critiques['vocal_technique'][issue]}")
-    else:
-        critique_parts.append("\nVocal Technique: " + blog_critiques["positive"])
-    
-    # 4. Add specific feedback based on lyrics
-    if lyrics:
-        critique_parts.append("\nPerformance Notes:")
-        # Analyze lyrics for potential challenges
-        if any(word in lyrics.lower() for word in ["high", "higher", "highest"]):
-            critique_parts.append("- For high notes, ensure proper breath support and maintain an open throat.")
-        if any(word in lyrics.lower() for word in ["low", "lower", "lowest"]):
-            critique_parts.append("- For low notes, maintain good posture and avoid pushing the voice.")
-        if len(lyrics.split()) > 50:
-            critique_parts.append("- For longer phrases, focus on breath management and pacing.")
-    
-    # Combine all parts into final critique
-    critique = "\n".join(critique_parts)
-    
-    # Create entry for performance database
+    tokenizer = AutoTokenizer.from_pretrained(LLAMA_MODEL_PATH)
+    llm = AutoModelForCausalLM.from_pretrained(LLAMA_MODEL_PATH, torch_dtype="auto")
+    past_performances = retrieve_similar_performances(performance_description, n=3)
+    # Use the first article for context (or you can aggregate)
+    article = all_articles[0]
+    snippet = article["content"][:600]
+    critique = generate_critique_with_history(llm, snippet, lyrics, performance_description, past_performances)
     entry = {
         "date": time.strftime("%Y-%m-%d %H:%M"),
         "lyrics": lyrics,
         "performance_description": performance_description,
         "critique": critique,
-        "detected_issues": detected_issues
     }
     if video_path:
         entry["video_path"] = video_path
-    
-    # Save to performance database
     save_performance(entry)
-    
     return critique, entry
 
 # ========== MAIN PIPELINE ==========
 def invoke_critique(lyrics, perf_description, video_path=None):
     # 1. Load the models and predict the performance quality frame-by-frame
     submitted_video = VideoFileClip(video_path)
-    save_op_video_dir = os.getcwd()+'/storage/output/videos'
-    if not os.path.exists(save_op_video_dir):
-        os.makedirs(save_op_video_dir, exist_ok=True)
     video_folder_name = (video_path.split('/')[-1]).split('.')[0]
 
     # Extract the audio
@@ -264,35 +217,22 @@ def invoke_critique(lyrics, perf_description, video_path=None):
     tensor_x = torch.tensor(features, dtype=torch.float32)
     input_dim = features.shape[1]
     audio_model = MultiLabelAudioRegressor(input_dim=input_dim, num_tasks=6, dropout=0.5)
-    preds_audio = get_predictions_regression(audio_model, tensor_x, 'cpu', quality_list)
+    preds = get_prediction_regression(audio_model, tensor_x, 'cpu', quality_list)
 
     # Get posture keypoints
-    blazepose_model = BlazePose().to('cpu')
-    blazepose_model.load_state_dict(torch.load(os.getcwd()+'/best_blazepose_model.pth'))
-    blazepose_model.eval()
-    device = torch.device('cpu')
-    pose_out_dir = os.getcwd()+'/'+video_folder_name+'/Pose Keypoints/'
-    if not os.path.exists(pose_out_dir):
-        os.makedirs(pose_out_dir, exist_ok=True)
-    extract_pose_keypoints_from_videos(save_op_video_dir, pose_out_dir, blazepose_model, device)
-    pose_classifier = PostureMLP(input_dim=66, num_labels=8).to('cpu')
-    pose_classifier.load_state_dict(torch.load(os.getcwd()+'/best_posture_estimator_model.pth', map_location=device))
-    pose_classifier.eval()
-    preds_posture = test_posture_classifier(pose_classifier, pose_out_dir, device)
-
 
     # 2. Feed lyrics and performance description to RAG critique generator
     singing_lyrics = lyrics
     performance_description = perf_description
 
     # 3. Call the new RAG function for backward compatibility
-    critique, entry = generate_rag_critique(singing_lyrics, performance_description, submitted_video)
+    critique, entry = generate_rag_critique(singing_lyrics, performance_description, uploaded_video_path)
     print(f"Critique:\n{critique}\n")
 
     # 4. Generate Narration with Nari Dia
     print("Generating narration with Nari Dia...")
     model = Dia.from_pretrained("nari-labs/Dia-1.6B")
-    narration_audio = model.generate(critique)
+    narration_audio = model.generate(critique_text)
     sf.write(NARRATION_WAV, narration_audio, 44100)
 
     # 5. Generate Singing Audio with DiffSinger
@@ -356,85 +296,5 @@ def invoke_critique(lyrics, perf_description, video_path=None):
 
     print(f"Done! Output: {FINAL_VIDEO_MP4}")
 
-def scrape_and_save_critiques():
-    """
-    Scrape vocal coaching blogs and save critiques to a JSON file
-    """
-    # List of vocal coaching blogs to scrape
-    blogs = [
-        "https://www.voiceteacher.com/blog",
-        "https://www.vocalist.org.uk/blog",
-        "https://www.singwise.com/articles",
-        "https://www.vocalcoach.com/blog"
-    ]
-    
-    critiques = {
-        "posture": {},
-        "vocal_technique": {},
-        "positive": "Excellent form! Your posture and vocal technique are well-aligned. Keep up the good work!"
-    }
-    
-    # Keywords to look for in blog content
-    posture_keywords = {
-        "forward_head": ["forward head", "head forward", "head alignment"],
-        "flat_back": ["flat back", "lower back curve", "spine alignment"],
-        "sway_back": ["sway back", "hip alignment", "pelvic tilt"],
-        "rounded_shoulders": ["rounded shoulders", "shoulder position", "shoulder alignment"],
-        "weak_abdominals": ["core engagement", "abdominal support", "core strength"],
-        "bent_knees": ["knee position", "leg alignment", "knee alignment"],
-        "raised_chest": ["chest position", "chest alignment", "upper body position"],
-        "bent_neck": ["neck alignment", "neck position", "head position"]
-    }
-    
-    vocal_keywords = {
-        "breath_support": ["breath support", "breathing technique", "diaphragmatic breathing"],
-        "tension": ["vocal tension", "jaw tension", "neck tension"],
-        "tone": ["vocal tone", "tone quality", "voice quality"],
-        "pitch": ["pitch accuracy", "pitch control", "vocal pitch"]
-    }
-    
-    for blog_url in blogs:
-        try:
-            response = requests.get(blog_url)
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Extract blog content
-            articles = soup.find_all(['article', 'div'], class_=['post', 'article', 'entry'])
-            
-            for article in articles:
-                content = article.get_text().lower()
-                
-                # Check for posture-related content
-                for issue, keywords in posture_keywords.items():
-                    if any(keyword in content for keyword in keywords):
-                        # Extract the relevant paragraph
-                        paragraphs = article.find_all('p')
-                        for p in paragraphs:
-                            p_text = p.get_text().lower()
-                            if any(keyword in p_text for keyword in keywords):
-                                if issue not in critiques["posture"]:
-                                    critiques["posture"][issue] = p.get_text().strip()
-                
-                # Check for vocal technique-related content
-                for issue, keywords in vocal_keywords.items():
-                    if any(keyword in content for keyword in keywords):
-                        # Extract the relevant paragraph
-                        paragraphs = article.find_all('p')
-                        for p in paragraphs:
-                            p_text = p.get_text().lower()
-                            if any(keyword in p_text for keyword in keywords):
-                                if issue not in critiques["vocal_technique"]:
-                                    critiques["vocal_technique"][issue] = p.get_text().strip()
-        
-        except Exception as e:
-            print(f"Error scraping {blog_url}: {str(e)}")
-    
-    # Save critiques to JSON file
-    os.makedirs('storage/data', exist_ok=True)
-    with open('storage/data/vocal_critiques.json', 'w') as f:
-        json.dump(critiques, f, indent=2)
-    
-    return critiques
-
 if __name__ == "__main__":
-    scrape_and_save_critiques()
+    main()
