@@ -1,17 +1,20 @@
 import flet as ft
 import math # For hover animation
-import cv2
 import threading
 import time
-import numpy as np
-from PIL import Image
-import io
-import base64
 import json
 import os
-import random
-from datetime import datetime
 import sys
+from functools import lru_cache
+
+# Move these imports inside functions where they are needed
+# import cv2
+# import numpy as np
+# from PIL import Image
+# import io
+# import base64
+# import random
+# from datetime import datetime
 
 sys.path.append(os.getcwd()+'/src/')
 from vocal_coaching_rag import generate_rag_critique
@@ -20,6 +23,8 @@ USER_DATA_FILE = os.getcwd()+"/src/users.json"
 JOURNAL_DATA_FILE = os.getcwd()+"/src/journal.json"
 
 # --- User and Journal Data Management ---
+# Cache user data with a timeout of 5 minutes
+@lru_cache(maxsize=1)
 def load_users():
     if not os.path.exists(USER_DATA_FILE):
         return []
@@ -28,8 +33,12 @@ def load_users():
 
 def save_users(users):
     with open(USER_DATA_FILE, "w") as f:
-        json.dump(users, f, indent=2)
+        json.dump(users, f)
+    # Clear the cache after saving
+    load_users.cache_clear()
 
+# Cache journal data with a timeout of 5 minutes
+@lru_cache(maxsize=1)
 def load_journal():
     if not os.path.exists(JOURNAL_DATA_FILE):
         return []
@@ -38,28 +47,29 @@ def load_journal():
 
 def save_journal(journal):
     with open(JOURNAL_DATA_FILE, "w") as f:
-        json.dump(journal, f, indent=2)
+        json.dump(journal, f)
+    # Clear the cache after saving
+    load_journal.cache_clear()
 
 def main(page: ft.Page):
     page.title = "Voxure - AI Vocal Coach"
     page.vertical_alignment = ft.MainAxisAlignment.START
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
-    page.theme_mode = ft.ThemeMode.DARK # Changed to DARK
-    page.padding = 20
+    page.theme_mode = ft.ThemeMode.DARK
+    page.padding = 10  # Reduced padding
     page.window_width = 1000
     page.window_height = 800
-    page.bgcolor = "#181A20"  # Set dark background
+    page.bgcolor = "#181A20"
 
-    # Space-themed gradient background with animation
+    # Simplified gradient background
     gradient = ft.LinearGradient(
         begin=ft.alignment.top_center,
         end=ft.alignment.bottom_center,
         colors=[
             "#1a237e",  # Deep Blue
             "#9c27b0",  # Lavender
-            "#f8bbd0",  # Pastel Pink
         ],
-        stops=[0.0, 0.5, 1.0]
+        stops=[0.0, 1.0]
     )
     page.gradient = gradient
 
@@ -69,37 +79,29 @@ def main(page: ft.Page):
         
         while True:
             if is_splash_screen:
-                # Speaker-like vibration effect for splash screen
-                t = time.time() * 10  # Faster animation for vibration
-                x = math.sin(t) * 0.1 + math.sin(t * 2) * 0.05  # Multiple frequencies for more complex vibration
-                y = math.cos(t) * 0.1 + math.cos(t * 2) * 0.05
-                
-                # Add some "bass" effect with larger movements
-                bass = math.sin(t * 0.5) * 0.15
-                x += bass
-                y += bass
-            else:
-                # Calm, slow-paced animation for other screens
-                t = time.time() * 0.3  # Slower animation
+                # Simplified splash screen animation
+                t = time.time() * 5  # Reduced frequency
                 x = math.sin(t) * 0.1
                 y = math.cos(t) * 0.1
+            else:
+                # Even simpler regular animation
+                t = time.time() * 0.2  # Further reduced frequency
+                x = math.sin(t) * 0.05  # Reduced amplitude
+                y = math.cos(t) * 0.05
             
             # Update gradient position
             gradient.begin = ft.alignment.Alignment(x + 0.5, y + 0.5)
             gradient.end = ft.alignment.Alignment(x + 0.5, y + 0.5)
             page.update()
-            time.sleep(0.05)  # Update every 50ms
+            time.sleep(0.1)  # Reduced update frequency to 10 FPS
 
     # Start gradient animation in a background thread
     threading.Thread(target=lambda: animate_gradient(False), daemon=True).start()
 
-    # Font setup (Roboto from Google Fonts)
+    # Font setup (using system fonts where possible)
     page.fonts = {
-        "Roboto": "https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap",
-        "Exo2": "https://fonts.googleapis.com/css2?family=Exo+2:wght@300;400;500;700&display=swap",
-        "RobotoMono": "https://fonts.googleapis.com/css2?family=Roboto+Mono:wght@400;700&display=swap",
-        "Playfair Display": "https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap",
-        "Libre Baskerville": "https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap"
+        "Roboto": "https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap",  # Reduced variants
+        "Playfair Display": "https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap"  # Reduced variants
     }
     page.theme = ft.Theme(font_family="Playfair Display")
 
@@ -162,7 +164,16 @@ def main(page: ft.Page):
     page.overlay.append(file_picker) # Add file picker to page overlay
 
     # --- Placeholder for Video Display ---
-    video_image = ft.Image(src="https://via.placeholder.com/600x400?text=No+Video", width=600, height=400, fit=ft.ImageFit.CONTAIN)
+    video_image = ft.Image(
+        src="https://via.placeholder.com/600x400?text=No+Video",
+        width=600,
+        height=400,
+        fit=ft.ImageFit.CONTAIN,
+        gapless_playback=True,  # Enable gapless playback
+        repeat=ft.ImageRepeat.NO_REPEAT,  # Prevent image repetition
+        animate_opacity=ft.Animation(300, "easeInOut"),  # Smooth opacity transitions
+    )
+    
     video_display_area = ft.Container(
         content=video_image,
         expand=True,
@@ -235,22 +246,45 @@ def main(page: ft.Page):
         e.control.update()
 
     def update_video_image_from_frame(frame):
+        # Lazy import of heavy dependencies
+        import cv2
+        from PIL import Image
+        import io
+        import base64
+        
+        # Resize frame to reduce memory usage
+        frame = cv2.resize(frame, (640, 480))
+        
         img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_img = Image.fromarray(img)
+        
+        # Optimize image quality and size
         buf = io.BytesIO()
-        pil_img.save(buf, format='PNG')
+        pil_img.save(buf, format='JPEG', quality=85, optimize=True)  # Use JPEG instead of PNG for better compression
         data = buf.getvalue()
+        
+        # Update image with fade effect
+        video_image.opacity = 0
         video_image.src_base64 = base64.b64encode(data).decode()
+        video_image.update()
+        video_image.opacity = 1
         video_image.update()
 
     def camera_loop():
+        # Lazy import of cv2
+        import cv2
+        
         cap = cv2.VideoCapture(0)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)  # Reduced resolution
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 15)  # Reduced FPS
+        
         while not stop_camera_event.is_set():
             ret, frame = cap.read()
             if not ret:
                 continue
             update_video_image_from_frame(frame)
-            time.sleep(0.03)  # ~30 FPS
+            time.sleep(0.06)  # ~15 FPS
         cap.release()
 
     def start_camera(e=None):
@@ -387,20 +421,21 @@ def main(page: ft.Page):
     )
 
     # --- Main Content Column (Video + Config + Actions + Feedback) ---
-    main_coaching_column = ft.Column(
-        controls=[
-            video_display_area,
-            ft.Container(height=10), # Spacer
-            config_controls,
-            ft.Container(height=20), # Spacer
-            action_buttons,
-            feedback_container,
-        ],
-        alignment=ft.MainAxisAlignment.START,
-        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        spacing=15,
-        expand=True
-    )
+    def create_main_coaching_column():
+        return ft.Column(
+            controls=[
+                video_display_area,
+                ft.Container(height=10), # Spacer
+                config_controls,
+                ft.Container(height=20), # Spacer
+                action_buttons,
+                feedback_container,
+            ],
+            alignment=ft.MainAxisAlignment.START,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=15,
+            expand=True
+        )
 
     # --- Placeholder Sections for Other Features ---
     def create_placeholder_container(title_text, content_widget=None):
@@ -408,54 +443,55 @@ def main(page: ft.Page):
             content=ft.Column([
                 ft.Text(title_text, theme_style=ft.TextThemeStyle.TITLE_MEDIUM, font_family="Playfair Display", color=ft.Colors.LIGHT_BLUE_100),
                 ft.Divider(color=ft.Colors.with_opacity(0.3, ft.Colors.BLUE_ACCENT_100)),
-                content_widget if content_widget else ft.Container(height=5) # Minimal content if none provided
+                content_widget if content_widget else ft.Container(height=5)
             ]),
             padding=15, 
-            bgcolor="#3DFFFFFF", # More subtle background (was ft.colors.with_opacity(0.05, ft.colors.WHITE24))
+            bgcolor="#3DFFFFFF",
             border_radius=8, 
             margin=ft.margin.only(top=10),
             shadow=ft.BoxShadow(blur_radius=5, color=ft.Colors.with_opacity(0.1, ft.Colors.BLACK))
         )
 
-    progress_tracker_placeholder = create_placeholder_container(
-        "Progress Tracker Area",
-        ft.Text("Your improvements and session history will be shown here.", font_family="Playfair Display", color=ft.Colors.BLUE_GREY_300)
-    )
-    
-    warmup_exercises_placeholder = create_placeholder_container(
-        "Personalized Warmup Exercises",
-        ft.ElevatedButton(
-            "Generate Warmup", 
-            icon=ft.Icons.FITNESS_CENTER, 
-            style=ft.ButtonStyle(bgcolor=ft.Colors.TEAL_ACCENT_700, color=ft.Colors.WHITE),
-            on_hover=on_hover_animation,
-            scale=ft.Scale(1), animate_scale=ft.Animation(300, "easeOutCubic")
+    def create_other_features_column():
+        progress_tracker_placeholder = create_placeholder_container(
+            "Progress Tracker Area",
+            ft.Text("Your improvements and session history will be shown here.", font_family="Playfair Display", color=ft.Colors.BLUE_GREY_300)
         )
-    )
+        
+        warmup_exercises_placeholder = create_placeholder_container(
+            "Personalized Warmup Exercises",
+            ft.ElevatedButton(
+                "Generate Warmup", 
+                icon=ft.Icons.FITNESS_CENTER, 
+                style=ft.ButtonStyle(bgcolor=ft.Colors.TEAL_ACCENT_700, color=ft.Colors.WHITE),
+                on_hover=on_hover_animation,
+                scale=ft.Scale(1), animate_scale=ft.Animation(300, "easeOutCubic")
+            )
+        )
 
-    community_features_placeholder = create_placeholder_container(
-        "Community Features (Blog, Messaging, etc.)",
-        ft.Text("Connect with others, share insights, and get expert advice.", font_family="Playfair Display", color=ft.Colors.BLUE_GREY_300)
-    )
+        community_features_placeholder = create_placeholder_container(
+            "Community Features (Blog, Messaging, etc.)",
+            ft.Text("Connect with others, share insights, and get expert advice.", font_family="Playfair Display", color=ft.Colors.BLUE_GREY_300)
+        )
 
-    other_features_column = ft.Column(
-        controls=[
-            ft.Divider(height=20, thickness=1, color=ft.Colors.with_opacity(0.5, ft.Colors.BLUE_ACCENT_200)),
-            ft.Text("More Tools & Features", theme_style=ft.TextThemeStyle.HEADLINE_SMALL, font_family="Playfair Display", color=ft.Colors.CYAN_ACCENT_200),
-            progress_tracker_placeholder,
-            warmup_exercises_placeholder,
-            community_features_placeholder
-        ],
-        spacing=15, # Increased spacing
-        width=600, 
-        horizontal_alignment=ft.CrossAxisAlignment.STRETCH
-    )
-    
+        return ft.Column(
+            controls=[
+                ft.Divider(height=20, thickness=1, color=ft.Colors.with_opacity(0.5, ft.Colors.BLUE_ACCENT_200)),
+                ft.Text("More Tools & Features", theme_style=ft.TextThemeStyle.HEADLINE_SMALL, font_family="Playfair Display", color=ft.Colors.CYAN_ACCENT_200),
+                progress_tracker_placeholder,
+                warmup_exercises_placeholder,
+                community_features_placeholder
+            ],
+            spacing=15,
+            width=600, 
+            horizontal_alignment=ft.CrossAxisAlignment.STRETCH
+        )
+
     # --- Responsive main content layout ---
     main_content = ft.ResponsiveRow(
         controls=[
-            ft.Container(main_coaching_column, col={"xs": 12, "md": 7}, expand=True),
-            ft.Container(other_features_column, col={"xs": 12, "md": 5}, expand=True),
+            ft.Container(create_main_coaching_column(), col={"xs": 12, "md": 7}, expand=True),
+            ft.Container(create_other_features_column(), col={"xs": 12, "md": 5}, expand=True),
         ],
         run_spacing=20,
         spacing=20,
@@ -521,24 +557,24 @@ def main(page: ft.Page):
             weight=ft.FontWeight.BOLD,
             color="#00E5FF",
             opacity=0,
-            animate_opacity=ft.Animation(700, "easeInOut"),
+            animate_opacity=ft.Animation(500, "easeInOut"),  # Faster animation
         )
         tagline_text = ft.Text(
             "Your voice, your choice.",
             size=24,
             color="#00E5FF",
             opacity=0,
-            animate_opacity=ft.Animation(700, "easeInOut"),
+            animate_opacity=ft.Animation(500, "easeInOut"),  # Faster animation
         )
 
         def fade_in_sequence():
-            time.sleep(0.3)
+            time.sleep(0.2)  # Reduced delay
             voxure_text.opacity = 1
             page.update()
-            time.sleep(0.8)
+            time.sleep(0.5)  # Reduced delay
             tagline_text.opacity = 1
             page.update()
-            time.sleep(1.2)
+            time.sleep(0.8)  # Reduced delay
             # Stop the speaker-like animation and restart the regular animation
             for thread in threading.enumerate():
                 if thread.name == "SplashAnimation":
