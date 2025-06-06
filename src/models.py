@@ -214,6 +214,25 @@ def analyze_bent_neck(pose):
     angle = np.arccos(np.clip(np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-6), -1, 1))
     return int(angle > np.deg2rad(25))
 
+def analyze_posture(pose):
+    """
+    Analyze a single pose frame for various posture issues.
+    Args:
+        pose: numpy array of shape (33, 3) containing (x, y, confidence)
+    Returns:
+        Dictionary of posture issues and their presence (0 or 1)
+    """
+    return {
+        "forward_head": analyze_forward_head(pose),
+        "flat_back": analyze_flat_back(pose),
+        "sway_back": analyze_sway_back(pose),
+        "rounded_shoulders": analyze_rounded_shoulders(pose),
+        "weak_abdominals": analyze_weak_abdominals(pose),
+        "bent_knees": analyze_bent_knees(pose),
+        "raised_chest": analyze_raised_chest(pose),
+        "bent_neck": analyze_bent_neck(pose)
+    }
+
 class PostureMLP(nn.Module):
     def __init__(self, input_dim=66, num_labels=8):
         super().__init__()
@@ -258,6 +277,96 @@ def test_posture_classifier(model_path, pose_dir, batch_size=8, device='cuda'):
                 print("---")
             break
     print("Testing complete.")
+
+class PostureIssueDataset(torch.utils.data.Dataset):
+    def __init__(self, pose_dir=None):
+        """
+        Initialize the dataset for posture issue classification.
+        Args:
+            pose_dir: Directory containing pose .npy files. If None, uses default directory.
+        """
+        if pose_dir is None:
+            pose_dir = os.path.join(os.getcwd(), 'pose_data')
+        
+        self.pose_dir = pose_dir
+        self.pose_files = []
+        self.labels = []
+        
+        # Define posture issues
+        self.posture_issues = [
+            "forward_head", "flat_back", "sway_back", "rounded_shoulders",
+            "weak_abdominals", "bent_knees", "raised_chest", "bent_neck"
+        ]
+        
+        # Walk through the pose directory to find all .npy files
+        for root, _, files in os.walk(pose_dir):
+            for file in files:
+                if file.endswith('_pose.npy'):
+                    pose_path = os.path.join(root, file)
+                    self.pose_files.append(pose_path)
+        
+        if not self.pose_files:
+            raise ValueError(f"No pose files found in {pose_dir}")
+        
+        print(f"Found {len(self.pose_files)} pose files")
+        
+        # Generate labels for each pose file
+        self.labels = []
+        for pose_path in tqdm(self.pose_files, desc="Generating posture labels"):
+            try:
+                # Load pose data
+                pose_data = np.load(pose_path)
+                
+                # If pose_data has multiple frames, use the first frame
+                if len(pose_data.shape) == 3:  # (frames, keypoints, coordinates)
+                    pose_data = pose_data[0]  # Take first frame
+                
+                # Analyze posture
+                posture_analysis = analyze_posture(pose_data)
+                
+                # Convert to binary label array
+                label = np.array([posture_analysis[issue] for issue in self.posture_issues])
+                self.labels.append(label)
+                
+            except Exception as e:
+                print(f"Error processing {pose_path}: {str(e)}")
+                # Add a zero label for failed files
+                self.labels.append(np.zeros(len(self.posture_issues)))
+        
+        # Convert labels to tensor
+        self.labels = torch.tensor(self.labels, dtype=torch.float32)
+        
+    def __len__(self):
+        return len(self.pose_files)
+    
+    def __getitem__(self, idx):
+        # Load pose data
+        pose_path = self.pose_files[idx]
+        pose_data = np.load(pose_path)
+        
+        # If pose_data has multiple frames, use the first frame
+        if len(pose_data.shape) == 3:  # (frames, keypoints, coordinates)
+            pose_data = pose_data[0]  # Take first frame
+        
+        # Ensure pose data has the correct shape (33 keypoints, 3 coordinates)
+        if pose_data.shape != (33, 3):
+            # If shape is different, pad or truncate to match (33, 3)
+            target_shape = (33, 3)
+            padded_data = np.zeros(target_shape, dtype=pose_data.dtype)
+            h, w = min(pose_data.shape[0], target_shape[0]), min(pose_data.shape[1], target_shape[1])
+            padded_data[:h, :w] = pose_data[:h, :w]
+            pose_data = padded_data
+        
+        # Flatten the pose data
+        pose_data = pose_data.reshape(-1)
+        
+        # Convert to tensor
+        pose_tensor = torch.from_numpy(pose_data).float()
+        
+        # Get label
+        label = self.labels[idx]
+        
+        return pose_tensor, label
 
 class MPIIBlazePoseDataset(torch.utils.data.Dataset):
     def __init__(self, images_dir, keypoints_dir):
@@ -648,193 +757,263 @@ def train_posture_classifier(num_epochs=20, batch_size=32, lr=1e-3, weight_decay
     """
     Train PostureMLP model with memory-efficient processing and mixed precision training.
     """
-    # Create dataset
-    full_dataset = PostureIssueDataset()
-    print(f"Full dataset size: {len(full_dataset)}")
-    
-    # Split dataset into train, validation, and test sets
-    train_size = int(0.7 * len(full_dataset))
-    val_size = int(0.15 * len(full_dataset))
-    test_size = len(full_dataset) - train_size - val_size
-    
-    train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
-        full_dataset, [train_size, val_size, test_size]
-    )
-    
-    print(f"Train set size: {len(train_dataset)}")
-    print(f"Validation set size: {len(val_dataset)}")
-    print(f"Test set size: {len(test_dataset)}")
-    
-    # Create dataloaders
-    train_loader = DataLoader(
-        train_dataset, 
-        batch_size=batch_size, 
-        shuffle=True, 
-        num_workers=2,
-        pin_memory=True,
-        persistent_workers=True
-    )
-    
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=2,
-        pin_memory=True
-    )
-    
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size=batch_size,
-        shuffle=False,
-        num_workers=2,
-        pin_memory=True
-    )
-    
-    # Initialize model and optimizer
-    model = PostureMLP(input_dim=66, num_labels=8).to(device)
-    model.train()
-    
-    # Use gradient accumulation to simulate larger batch size
-    accumulation_steps = 4  # Accumulate gradients for 4 batches
-    effective_batch_size = batch_size * accumulation_steps
-    
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)
-    criterion = nn.BCEWithLogitsLoss()
-    
-    # Initialize mixed precision training
-    scaler = torch.amp.GradScaler('cuda')
-    
-    # Training loop variables
-    best_val_loss = float('inf')
-    patience_counter = 0
-    
-    # Training loop
-    for epoch in range(num_epochs):
-        # Training phase
+    try:
+        # Create dataset
+        full_dataset = PostureIssueDataset()
+        print(f"Full dataset size: {len(full_dataset)}")
+        
+        # Split dataset into train, validation, and test sets
+        train_size = int(0.7 * len(full_dataset))
+        val_size = int(0.15 * len(full_dataset))
+        test_size = len(full_dataset) - train_size - val_size
+        
+        train_dataset, val_dataset, test_dataset = torch.utils.data.random_split(
+            full_dataset, [train_size, val_size, test_size]
+        )
+        
+        print(f"Train set size: {len(train_dataset)}")
+        print(f"Validation set size: {len(val_dataset)}")
+        print(f"Test set size: {len(test_dataset)}")
+        
+        # Create dataloaders with error handling
+        train_loader = DataLoader(
+            train_dataset, 
+            batch_size=batch_size, 
+            shuffle=True, 
+            num_workers=2,
+            pin_memory=True,
+            persistent_workers=True
+        )
+        
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=2,
+            pin_memory=True
+        )
+        
+        test_loader = DataLoader(
+            test_dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            num_workers=2,
+            pin_memory=True
+        )
+        
+        # Get input dimension from first batch
+        sample_pose, _ = next(iter(train_loader))
+        input_dim = sample_pose.shape[1]
+        num_labels = len(full_dataset.posture_issues)
+        
+        print(f"Input dimension: {input_dim}")
+        print(f"Number of labels: {num_labels}")
+        
+        # Initialize model and optimizer
+        model = PostureMLP(input_dim=input_dim, num_labels=num_labels).to(device)
         model.train()
-        train_loss = 0
         
-        # Progress bar for training
-        train_pbar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{num_epochs} [Train]')
+        # Use gradient accumulation to simulate larger batch size
+        accumulation_steps = 4  # Accumulate gradients for 4 batches
+        effective_batch_size = batch_size * accumulation_steps
         
-        # Reset gradients at start of epoch
-        optimizer.zero_grad()
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2)
+        criterion = nn.BCEWithLogitsLoss()  # Changed back to BCEWithLogitsLoss for multi-label classification
         
-        for batch_idx, (poses, labels) in enumerate(train_pbar):
-            # Move data to device
-            poses = poses.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
-            
-            # Forward pass with mixed precision
-            with torch.amp.autocast('cuda'):
-                logits = model(poses)
-                loss = criterion(logits, labels)
-                # Normalize loss by accumulation steps
-                loss = loss / accumulation_steps
-            
-            # Backward pass with gradient scaling
-            scaler.scale(loss).backward()
-            
-            # Update weights if we've accumulated enough gradients
-            if (batch_idx + 1) % accumulation_steps == 0:
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad()
-            
-            # Update statistics
-            train_loss += loss.item() * effective_batch_size
-            train_pbar.set_postfix({'loss': loss.item() * accumulation_steps})
-            
-            # Clear memory
-            del poses, labels, logits, loss
-            torch.cuda.empty_cache()
+        # Initialize mixed precision training
+        scaler = torch.amp.GradScaler()
         
-        # Calculate average training loss
-        avg_train_loss = train_loss / len(train_dataset)
+        # Training loop variables
+        best_val_loss = float('inf')
+        patience_counter = 0
         
-        # Validation phase
+        # Training loop
+        for epoch in range(num_epochs):
+            # Training phase
+            model.train()
+            train_loss = 0
+            
+            # Progress bar for training
+            train_pbar = tqdm(train_loader, desc=f'Epoch {epoch+1}/{num_epochs} [Train]')
+            
+            # Reset gradients at start of epoch
+            optimizer.zero_grad()
+            
+            for batch_idx, (poses, labels) in enumerate(train_pbar):
+                try:
+                    # Move data to device
+                    poses = poses.to(device, non_blocking=True)
+                    labels = labels.to(device, non_blocking=True)
+                    
+                    # Forward pass with mixed precision
+                    with torch.amp.autocast(device_type='cuda', dtype=torch.float16):
+                        logits = model(poses)
+                        loss = criterion(logits, labels)
+                        # Normalize loss by accumulation steps
+                        loss = loss / accumulation_steps
+                    
+                    # Backward pass with gradient scaling
+                    scaler.scale(loss).backward()
+                    
+                    # Update weights if we've accumulated enough gradients
+                    if (batch_idx + 1) % accumulation_steps == 0:
+                        scaler.step(optimizer)
+                        scaler.update()
+                        optimizer.zero_grad()
+                    
+                    # Update statistics
+                    train_loss += loss.item() * effective_batch_size
+                    train_pbar.set_postfix({'loss': loss.item() * accumulation_steps})
+                    
+                except Exception as e:
+                    print(f"Error in training batch {batch_idx}: {str(e)}")
+                    continue
+                
+                finally:
+                    # Clear memory
+                    del poses, labels, logits, loss
+                    torch.cuda.empty_cache()
+            
+            # Calculate average training loss
+            avg_train_loss = train_loss / len(train_dataset)
+            
+            # Validation phase
+            model.eval()
+            val_loss = 0
+            
+            with torch.no_grad():
+                val_pbar = tqdm(val_loader, desc=f'Epoch {epoch+1}/{num_epochs} [Val]')
+                for poses, labels in val_pbar:
+                    try:
+                        # Move data to device
+                        poses = poses.to(device, non_blocking=True)
+                        labels = labels.to(device, non_blocking=True)
+                        
+                        # Forward pass
+                        logits = model(poses)
+                        loss = criterion(logits, labels)
+                        
+                        # Update statistics
+                        val_loss += loss.item() * poses.size(0)
+                        val_pbar.set_postfix({'loss': loss.item()})
+                        
+                    except Exception as e:
+                        print(f"Error in validation batch: {str(e)}")
+                        continue
+                    
+                    finally:
+                        # Clear memory
+                        del poses, labels, logits, loss
+                        torch.cuda.empty_cache()
+            
+            # Calculate average validation loss
+            avg_val_loss = val_loss / len(val_dataset)
+            
+            print(f"Epoch {epoch+1}/{num_epochs}:")
+            print(f"  Train Loss: {avg_train_loss:.6f}")
+            print(f"  Val Loss: {avg_val_loss:.6f}")
+            
+            # Learning rate scheduling based on validation loss
+            scheduler.step(avg_val_loss)
+            
+            # Model checkpointing based on validation loss
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                patience_counter = 0
+                save_path = os.path.join(os.getcwd(), 'best_posture_estimator_model.pth')
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'val_loss': best_val_loss,
+                    'posture_issues': full_dataset.posture_issues,
+                }, save_path)
+                print(f"  Saved model checkpoint with validation loss: {best_val_loss:.6f}")
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    print("Early stopping triggered.")
+                    break
+        
+        # Test phase
+        print("\nEvaluating on test set...")
         model.eval()
-        val_loss = 0
+        test_loss = 0
+        all_preds = []
+        all_labels = []
         
         with torch.no_grad():
-            val_pbar = tqdm(val_loader, desc=f'Epoch {epoch+1}/{num_epochs} [Val]')
-            for poses, labels in val_pbar:
-                # Move data to device
-                poses = poses.to(device, non_blocking=True)
-                labels = labels.to(device, non_blocking=True)
+            test_pbar = tqdm(test_loader, desc='Test')
+            for poses, labels in test_pbar:
+                try:
+                    # Move data to device
+                    poses = poses.to(device, non_blocking=True)
+                    labels = labels.to(device, non_blocking=True)
+                    
+                    # Forward pass
+                    logits = model(poses)
+                    loss = criterion(logits, labels)
+                    
+                    # Get predictions
+                    preds = torch.sigmoid(logits) > 0.5
+                    all_preds.extend(preds.cpu().numpy())
+                    all_labels.extend(labels.cpu().numpy())
+                    
+                    # Update statistics
+                    test_loss += loss.item() * poses.size(0)
+                    test_pbar.set_postfix({'loss': loss.item()})
+                    
+                except Exception as e:
+                    print(f"Error in test batch: {str(e)}")
+                    continue
                 
-                # Forward pass
-                logits = model(poses)
-                loss = criterion(logits, labels)
-                
-                # Update statistics
-                val_loss += loss.item() * poses.size(0)
-                val_pbar.set_postfix({'loss': loss.item()})
-                
-                # Clear memory
-                del poses, labels, logits, loss
-                torch.cuda.empty_cache()
+                finally:
+                    # Clear memory
+                    del poses, labels, logits, loss
+                    torch.cuda.empty_cache()
         
-        # Calculate average validation loss
-        avg_val_loss = val_loss / len(val_dataset)
+        # Calculate average test loss and metrics
+        avg_test_loss = test_loss / len(test_dataset)
+        all_preds = np.array(all_preds)
+        all_labels = np.array(all_labels)
         
-        print(f"Epoch {epoch+1}/{num_epochs}:")
-        print(f"  Train Loss: {avg_train_loss:.6f}")
-        print(f"  Val Loss: {avg_val_loss:.6f}")
+        # Calculate metrics for each posture issue
+        print("\nTest Results:")
+        print(f"Overall Loss: {avg_test_loss:.6f}")
+        print("\nPer-posture issue metrics:")
+        for i, issue in enumerate(full_dataset.posture_issues):
+            issue_preds = all_preds[:, i]
+            issue_labels = all_labels[:, i]
+            accuracy = accuracy_score(issue_labels, issue_preds)
+            precision = precision_score(issue_labels, issue_preds)
+            recall = recall_score(issue_labels, issue_preds)
+            f1 = f1_score(issue_labels, issue_preds)
+            print(f"\n{issue}:")
+            print(f"  Accuracy: {accuracy:.4f}")
+            print(f"  Precision: {precision:.4f}")
+            print(f"  Recall: {recall:.4f}")
+            print(f"  F1 Score: {f1:.4f}")
         
-        # Learning rate scheduling based on validation loss
-        scheduler.step(avg_val_loss)
+        # Plot confusion matrices for each posture issue
+        plt.figure(figsize=(15, 10))
+        for i, issue in enumerate(full_dataset.posture_issues):
+            plt.subplot(3, 3, i+1)
+            cm = confusion_matrix(all_labels[:, i], all_preds[:, i])
+            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+            plt.title(f'Confusion Matrix - {issue}')
+            plt.xlabel('Predicted')
+            plt.ylabel('True')
+        plt.tight_layout()
+        plt.savefig('confusion_matrices.png')
+        plt.close()
         
-        # Model checkpointing based on validation loss
-        if avg_val_loss < best_val_loss:
-            best_val_loss = avg_val_loss
-            patience_counter = 0
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'val_loss': best_val_loss,
-            }, os.getcwd()+'/best_posture_estimator_model.pth')
-            print(f"  Saved model checkpoint with validation loss: {best_val_loss:.6f}")
-        else:
-            patience_counter += 1
-            if patience_counter >= patience:
-                print("Early stopping triggered.")
-                break
-    
-    # Test phase
-    print("\nEvaluating on test set...")
-    model.eval()
-    test_loss = 0
-    
-    with torch.no_grad():
-        test_pbar = tqdm(test_loader, desc='Test')
-        for poses, labels in test_pbar:
-            # Move data to device
-            poses = poses.to(device, non_blocking=True)
-            labels = labels.to(device, non_blocking=True)
-            
-            # Forward pass
-            logits = model(poses)
-            loss = criterion(logits, labels)
-            
-            # Update statistics
-            test_loss += loss.item() * poses.size(0)
-            test_pbar.set_postfix({'loss': loss.item()})
-            
-            # Clear memory
-            del poses, labels, logits, loss
-            torch.cuda.empty_cache()
-    
-    # Calculate average test loss
-    avg_test_loss = test_loss / len(test_dataset)
-    print(f"Test Loss: {avg_test_loss:.6f}")
-    
-    print("Posture classifier training complete.")
-    
-    return model
+        print("\nPosture classifier training complete.")
+        return model
+        
+    except Exception as e:
+        print(f"Error during training: {str(e)}")
+        raise
 
 def get_blazepose_keypoints_from_model(image, model, device):
     # image: BGR numpy array
