@@ -63,15 +63,26 @@ def main(page: ft.Page):
     )
     page.gradient = gradient
 
-    def animate_gradient():
+    def animate_gradient(is_splash_screen=False):
         import math
         import time
         
         while True:
-            # Create a smooth circular motion
-            t = time.time() * 0.5  # Slow down the animation
-            x = math.sin(t) * 0.2
-            y = math.cos(t) * 0.2
+            if is_splash_screen:
+                # Speaker-like vibration effect for splash screen
+                t = time.time() * 10  # Faster animation for vibration
+                x = math.sin(t) * 0.1 + math.sin(t * 2) * 0.05  # Multiple frequencies for more complex vibration
+                y = math.cos(t) * 0.1 + math.cos(t * 2) * 0.05
+                
+                # Add some "bass" effect with larger movements
+                bass = math.sin(t * 0.5) * 0.15
+                x += bass
+                y += bass
+            else:
+                # Calm, slow-paced animation for other screens
+                t = time.time() * 0.3  # Slower animation
+                x = math.sin(t) * 0.1
+                y = math.cos(t) * 0.1
             
             # Update gradient position
             gradient.begin = ft.alignment.Alignment(x + 0.5, y + 0.5)
@@ -80,7 +91,7 @@ def main(page: ft.Page):
             time.sleep(0.05)  # Update every 50ms
 
     # Start gradient animation in a background thread
-    threading.Thread(target=animate_gradient, daemon=True).start()
+    threading.Thread(target=lambda: animate_gradient(False), daemon=True).start()
 
     # Font setup (Roboto from Google Fonts)
     page.fonts = {
@@ -496,6 +507,14 @@ def main(page: ft.Page):
 
     # --- Splash Screen ---
     def splash_screen():
+        # Stop the regular animation and start the speaker-like animation
+        for thread in threading.enumerate():
+            if thread.name == "Thread-1":  # The gradient animation thread
+                thread._stop()
+        
+        # Start the speaker-like animation
+        threading.Thread(target=lambda: animate_gradient(True), daemon=True, name="SplashAnimation").start()
+
         voxure_text = ft.Text(
             "Voxure",
             size=50,
@@ -520,6 +539,11 @@ def main(page: ft.Page):
             tagline_text.opacity = 1
             page.update()
             time.sleep(1.2)
+            # Stop the speaker-like animation and restart the regular animation
+            for thread in threading.enumerate():
+                if thread.name == "SplashAnimation":
+                    thread._stop()
+            threading.Thread(target=lambda: animate_gradient(False), daemon=True).start()
             page.go("/users")
 
         # Start the fade-in sequence in a background thread

@@ -56,6 +56,7 @@ DIFFSINGER_CONFIG = r"../DiffSinger/configs/base.yaml"  # Path to DiffSinger con
 DIFFSINGER_CHECKPOINT = r"../DiffSinger/checkpoint.pth"  # Path to DiffSinger checkpoint
 DEFORUM_MAIN_SCRIPT = r"../stable-diffusion-webui/extensions/deforum/scripts/deforum.py"  # Path to Deforum main script
 AUDIO_MODEL_WEIGHTS = os.getcwd()+'/best_multilabel_audio_model.pth'
+BLAZEPOSE_MODEL_WEIGHTS = os.getcwd()+'/blazepose_mpii.pth'
 POSTURE_MODEL_WEIGHT = os.getcwd()+'/best_posture_estimator_model.pth'
 quality_list = ['GRBAS Strain', 'breath_control', 'agility', 'stamina', 'phonation', 'resonance']
 MPII_KEYPOINTS_MAT = os.getcwd()+'/mpii_human_pose_v1_sequences_keyframes.mat'
@@ -94,7 +95,7 @@ def scrape_blog(url, article_selector, content_selector, max_articles=1000):
     return articles
 
 # ========== LLAMA PROMPTING FUNCTION ==========
-def generate_critique(llm, article_snippet, lyrics, performance_description):
+def generate_critique(llm, article_snippet, lyrics, performance_description, posture_description, vocal_technique_description):
     prompt = f'''
 You are a vocal coach who has just read the following expert advice:
 """
@@ -107,6 +108,12 @@ Lyrics:
 
 Performance description:
 "{performance_description}"
+
+Posture description:
+"{posture_description}"
+
+Vocal technique description:
+"{vocal_technique_description}"
 
 Critique:
 '''
@@ -140,7 +147,7 @@ def retrieve_similar_performances(current_desc, n=3, db_path=PERFORMANCE_DB):
     hits = util.semantic_search(query_embedding, corpus_embeddings, top_k=n)[0]
     return [performances[hit["corpus_id"]] for hit in hits]
 
-def generate_critique_with_history(llm, article_snippet, lyrics, performance_description, past_performances):
+def generate_critique_with_history(llm, article_snippet, lyrics, performance_description, posture_description, vocal_technique_description, past_performances):
     history = "\n\n".join(
         f"Date: {p.get('date','?')}\nLyrics: {p.get('lyrics','')}\nDescription: {p.get('performance_description','')}\nCritique: {p.get('critique','')}"
         for p in past_performances
@@ -162,11 +169,17 @@ Lyrics:
 Performance description:
 "{performance_description}"
 
+Posture description:
+"{posture_description}"
+
+Vocal technique description:
+"{vocal_technique_description}"
+
 Critique:
 '''
     return llm(prompt)
 
-def generate_rag_critique(lyrics, performance_description, video_path=None):
+def generate_rag_critique(lyrics, performance_description, posture_description, vocal_technique_description, video_path=None):
     # 1. Scrape articles from all blogs
     all_articles = []
     for site in BLOG_SITES:
@@ -184,11 +197,13 @@ def generate_rag_critique(lyrics, performance_description, video_path=None):
     # Use the first article for context (or you can aggregate)
     article = all_articles[0]
     snippet = article["content"][:600]
-    critique = generate_critique_with_history(llm, snippet, lyrics, performance_description, past_performances)
+    critique = generate_critique_with_history(llm, snippet, lyrics, performance_description, posture_description, vocal_technique_description, past_performances)
     entry = {
         "date": time.strftime("%Y-%m-%d %H:%M"),
         "lyrics": lyrics,
         "performance_description": performance_description,
+        "posture_description": posture_description,
+        "vocal_technique_description": vocal_technique_description,
         "critique": critique,
     }
     if video_path:
@@ -201,12 +216,21 @@ def invoke_critique(lyrics, perf_description, video_path=None):
     # 1. Load the models and predict the performance quality frame-by-frame
     submitted_video = VideoFileClip(video_path)
     video_folder_name = (video_path.split('/')[-1]).split('.')[0]
-
+    video_folder_path = os.getcwd()+'/'+video_folder_name+'/Video'
     # Extract the audio
-    audio = submitted_video.audio
+    submitted_audio = submitted_video.audio
+    audio_path = os.getcwd()+'/'+video_folder_name+'/Audio'
+    submitted_audio.write_audiofile(audio_path+'/Audio.wav')
     features_dir = os.getcwd()+'/'+video_folder_name+'/Audio Feats/'
+    pose_dir = os.getcwd()+'/'+video_folder_name+'/Pose/'
+    if not os.path.exists(video_folder_path):
+        os.makedirs(video_folder_path, exist_ok=True)
+    if not os.path.exists(audio_path):
+        os.makedirs(audio_path, exist_ok=True)
     if not os.path.exists(features_dir):
         os.makedirs(features_dir, exist_ok=True)
+    if not os.path.exists(pose_dir):
+        os.makedirs(pose_dir, exist_ok=True)
     mfcc_path = os.path.join(features_dir, f"{video_folder_name}_mfcc.npy")
     scatter_path = os.path.join(features_dir, f"{video_folder_name}_scatter.npy")
     if not os.path.exists(mfcc_path):
@@ -217,22 +241,34 @@ def invoke_critique(lyrics, perf_description, video_path=None):
     tensor_x = torch.tensor(features, dtype=torch.float32)
     input_dim = features.shape[1]
     audio_model = MultiLabelAudioRegressor(input_dim=input_dim, num_tasks=6, dropout=0.5)
-    preds = get_prediction_regression(audio_model, tensor_x, 'cpu', quality_list)
+    audio_preds = get_predictions_regression(audio_model, tensor_x, 'cpu', quality_list)
 
     # Get posture keypoints
+    blazepose_model = BlazePose(BLAZEPOSE_MODEL_WEIGHTS).to('cpu')
+    checkpoint = torch.load(BLAZEPOSE_MODEL_WEIGHTS)
+    blazepose_model.load_state_dict(checkpoint['model_state_dict'])
+    extract_pose_keypoints_from_videos_parallel(video_folder_path, pose_dir, blazepose_model, 'cpu')
+    normalize_poses_directory(pose_dir, pose_dir)
+    posture_model = PostureMLP(input_dim=66, num_labels=8)
+    posture_model.load_state_dict(torch.load(POSTURE_MODEL_WEIGHT))
+    posture_model.eval()
+    posture_model.to('cpu')
+    posture_preds = test_posture_classifier(posture_model, pose_dir, batch_size=8, device='cpu')
 
     # 2. Feed lyrics and performance description to RAG critique generator
     singing_lyrics = lyrics
     performance_description = perf_description
+    posture_description = posture_preds
+    vocal_technique_description = audio_preds
 
     # 3. Call the new RAG function for backward compatibility
-    critique, entry = generate_rag_critique(singing_lyrics, performance_description, uploaded_video_path)
+    critique, entry = generate_rag_critique(singing_lyrics, performance_description, posture_description, vocal_technique_description, video_folder_path)
     print(f"Critique:\n{critique}\n")
 
     # 4. Generate Narration with Nari Dia
     print("Generating narration with Nari Dia...")
     model = Dia.from_pretrained("nari-labs/Dia-1.6B")
-    narration_audio = model.generate(critique_text)
+    narration_audio = model.generate(critique)
     sf.write(NARRATION_WAV, narration_audio, 44100)
 
     # 5. Generate Singing Audio with DiffSinger
@@ -295,6 +331,3 @@ def invoke_critique(lyrics, perf_description, video_path=None):
     final_video.write_videofile(FINAL_VIDEO_MP4, codec="libx264", audio_codec="aac")
 
     print(f"Done! Output: {FINAL_VIDEO_MP4}")
-
-if __name__ == "__main__":
-    main()
