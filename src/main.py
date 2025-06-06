@@ -6,15 +6,44 @@ import json
 import os
 import sys
 from functools import lru_cache
+from typing import Optional, Dict, List, Any
 
-# Move these imports inside functions where they are needed
-# import cv2
-# import numpy as np
-# from PIL import Image
-# import io
-# import base64
-# import random
-# from datetime import datetime
+# Lazy imports for heavy dependencies
+_imports = {
+    'cv2': None,
+    'PIL': None,
+    'numpy': None,
+    'base64': None,
+    'io': None,
+    'random': None,
+    'datetime': None
+}
+
+def get_import(name: str) -> Any:
+    """Lazy import helper function"""
+    if _imports[name] is None:
+        if name == 'cv2':
+            import cv2
+            _imports[name] = cv2
+        elif name == 'PIL':
+            from PIL import Image
+            _imports[name] = Image
+        elif name == 'numpy':
+            import numpy as np
+            _imports[name] = np
+        elif name == 'base64':
+            import base64
+            _imports[name] = base64
+        elif name == 'io':
+            import io
+            _imports[name] = io
+        elif name == 'random':
+            import random
+            _imports[name] = random
+        elif name == 'datetime':
+            from datetime import datetime
+            _imports[name] = datetime
+    return _imports[name]
 
 sys.path.append(os.getcwd()+'/src/')
 from vocal_coaching_rag import generate_rag_critique
@@ -75,25 +104,73 @@ def main(page: ft.Page):
 
     def animate_gradient(is_splash_screen=False):
         import math
-        import time
+        
+        last_update = time.time()
+        update_interval = 0.1  # 10 FPS
         
         while True:
+            current_time = time.time()
+            if current_time - last_update < update_interval:
+                time.sleep(0.01)  # Small sleep to prevent CPU hogging
+                continue
+                
             if is_splash_screen:
-                # Simplified splash screen animation
-                t = time.time() * 5  # Reduced frequency
+                t = current_time * 5
                 x = math.sin(t) * 0.1
                 y = math.cos(t) * 0.1
             else:
-                # Even simpler regular animation
-                t = time.time() * 0.2  # Further reduced frequency
-                x = math.sin(t) * 0.05  # Reduced amplitude
+                t = current_time * 0.2
+                x = math.sin(t) * 0.05
                 y = math.cos(t) * 0.05
             
-            # Update gradient position
-            gradient.begin = ft.alignment.Alignment(x + 0.5, y + 0.5)
-            gradient.end = ft.alignment.Alignment(x + 0.5, y + 0.5)
-            page.update()
-            time.sleep(0.1)  # Reduced update frequency to 10 FPS
+            # Only update if values have changed significantly
+            if abs(gradient.begin.x - (x + 0.5)) > 0.01 or abs(gradient.begin.y - (y + 0.5)) > 0.01:
+                gradient.begin = ft.alignment.Alignment(x + 0.5, y + 0.5)
+                gradient.end = ft.alignment.Alignment(x + 0.5, y + 0.5)
+                page.update()
+                last_update = current_time
+
+    def update_ui_safely(control, **kwargs):
+        """Safely update UI controls with rate limiting"""
+        if not hasattr(update_ui_safely, 'last_updates'):
+            update_ui_safely.last_updates = {}
+        
+        current_time = time.time()
+        control_id = id(control)
+        
+        # Rate limit updates to 30 FPS
+        if control_id in update_ui_safely.last_updates:
+            if current_time - update_ui_safely.last_updates[control_id] < 0.033:
+                return
+        
+        for key, value in kwargs.items():
+            setattr(control, key, value)
+        
+        control.update()
+        update_ui_safely.last_updates[control_id] = current_time
+
+    def update_video_image_from_frame(frame):
+        # Use centralized imports
+        cv2 = get_import('cv2')
+        PIL = get_import('PIL')
+        io = get_import('io')
+        base64 = get_import('base64')
+        
+        # Resize frame to reduce memory usage
+        frame = cv2.resize(frame, (640, 480))
+        
+        img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil_img = PIL.Image.fromarray(img)
+        
+        # Optimize image quality and size
+        buf = io.BytesIO()
+        pil_img.save(buf, format='JPEG', quality=85, optimize=True)
+        data = buf.getvalue()
+        
+        # Update image with fade effect using safe update
+        update_ui_safely(video_image, opacity=0)
+        update_ui_safely(video_image, src_base64=base64.b64encode(data).decode())
+        update_ui_safely(video_image, opacity=1)
 
     # Start gradient animation in a background thread
     threading.Thread(target=lambda: animate_gradient(False), daemon=True).start()
@@ -123,7 +200,7 @@ def main(page: ft.Page):
             uploaded_video_path = selected_file.path
             feedback_text_area.value = f"Selected video: {selected_file.name}\nReady for analysis."
             # Extract and show first frame
-            cap = cv2.VideoCapture(uploaded_video_path)
+            cap = get_import('cv2').VideoCapture(uploaded_video_path)
             ret, frame = cap.read()
             cap.release()
             if ret:
@@ -245,39 +322,14 @@ def main(page: ft.Page):
         )
         e.control.update()
 
-    def update_video_image_from_frame(frame):
-        # Lazy import of heavy dependencies
-        import cv2
-        from PIL import Image
-        import io
-        import base64
-        
-        # Resize frame to reduce memory usage
-        frame = cv2.resize(frame, (640, 480))
-        
-        img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_img = Image.fromarray(img)
-        
-        # Optimize image quality and size
-        buf = io.BytesIO()
-        pil_img.save(buf, format='JPEG', quality=85, optimize=True)  # Use JPEG instead of PNG for better compression
-        data = buf.getvalue()
-        
-        # Update image with fade effect
-        video_image.opacity = 0
-        video_image.src_base64 = base64.b64encode(data).decode()
-        video_image.update()
-        video_image.opacity = 1
-        video_image.update()
-
     def camera_loop():
-        # Lazy import of cv2
-        import cv2
+        # Use centralized imports
+        cv2 = get_import('cv2')
         
         cap = cv2.VideoCapture(0)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)  # Reduced resolution
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 15)  # Reduced FPS
+        cap.set(cv2.CAP_PROP_FPS, 15)
         
         while not stop_camera_event.is_set():
             ret, frame = cap.read()
