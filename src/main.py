@@ -90,6 +90,9 @@ def main(page: ft.Page):
     page.window_height = 800
     page.bgcolor = "#181A20"
 
+    # --- Animation Control ---
+    stop_gradient_animation = threading.Event()
+
     # Simplified gradient background
     gradient = ft.LinearGradient(
         begin=ft.alignment.top_center,
@@ -108,7 +111,7 @@ def main(page: ft.Page):
         last_update = time.time()
         update_interval = 0.1  # 10 FPS
         
-        while True:
+        while not stop_gradient_animation.is_set():
             current_time = time.time()
             if current_time - last_update < update_interval:
                 time.sleep(0.01)  # Small sleep to prevent CPU hogging
@@ -173,7 +176,7 @@ def main(page: ft.Page):
         update_ui_safely(video_image, opacity=1)
 
     # Start gradient animation in a background thread
-    threading.Thread(target=lambda: animate_gradient(False), daemon=True).start()
+    threading.Thread(target=lambda: animate_gradient(False), daemon=True, name="MainAnimation").start()
 
     # Font setup (using system fonts where possible)
     page.fonts = {
@@ -596,9 +599,11 @@ def main(page: ft.Page):
     # --- Splash Screen ---
     def splash_screen():
         # Stop the regular animation and start the speaker-like animation
+        stop_gradient_animation.set()
         for thread in threading.enumerate():
-            if thread.name == "Thread-1":  # The gradient animation thread
-                thread._stop()
+            if thread.name == "MainAnimation":
+                thread.join()  # Wait for the thread to finish
+        stop_gradient_animation.clear()
         
         # Start the speaker-like animation
         threading.Thread(target=lambda: animate_gradient(True), daemon=True, name="SplashAnimation").start()
@@ -628,10 +633,12 @@ def main(page: ft.Page):
             page.update()
             time.sleep(0.8)  # Reduced delay
             # Stop the speaker-like animation and restart the regular animation
+            stop_gradient_animation.set()
             for thread in threading.enumerate():
                 if thread.name == "SplashAnimation":
-                    thread._stop()
-            threading.Thread(target=lambda: animate_gradient(False), daemon=True).start()
+                    thread.join() # Wait for the thread to finish
+            stop_gradient_animation.clear()
+            threading.Thread(target=lambda: animate_gradient(False), daemon=True, name="MainAnimation").start()
             page.go("/users")
 
         # Start the fade-in sequence in a background thread
@@ -800,9 +807,10 @@ def main(page: ft.Page):
         def on_upload_video(e):
             setattr(overlay, 'open', False)
             page.update()
-            page.open(dialog) 
-            threading.Thread(target=animate, daemon=True).start()
-            
+            file_picker.pick_files(
+                dialog_title="Select a video to analyze",
+                allowed_extensions=["mp4", "mov", "avi", "webm"]
+            )
             # Wait a short moment before navigating
             def delayed_nav():
                 time.sleep(0.1)

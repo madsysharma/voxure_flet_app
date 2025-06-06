@@ -13,13 +13,22 @@ import numpy as np
 import json
 import sys
 import shutil
-sys.path.append(os.getcwd()+'/models.py')
-sys.path.append('../dia/dia/')
-sys.path.append('../DiffSinger/')
-sys.path.append('../MediaPipePyTorch/')
-sys.path.append('../stable-diffusion-webui/extensions/deforum/scripts/')
+
+# Add necessary paths to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+sys.path.append(os.path.join(project_root, 'models.py'))
+sys.path.append(os.path.join(project_root, 'dia/dia/'))
+sys.path.append(os.path.join(project_root, 'DiffSinger/'))
+sys.path.append(os.path.join(project_root, 'MediaPipePyTorch/'))
+deforum_path = os.path.join(project_root, 'stable-diffusion-webui/extensions/deforum/scripts')
+sys.path.append(deforum_path)
+
 from models import *
-from deforum import *
+try:
+    from deforum import *
+except ImportError:
+    print("Warning: Could not import deforum module. Some features may not work.")
 from model import *
 
 # ========== CONFIGURATION ==========

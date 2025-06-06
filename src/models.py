@@ -23,8 +23,14 @@ import time
 import random
 import mediapipe as mp
 from tqdm import tqdm
+import os
 
-sys.path.append(os.getcwd()+'/MediaPipePyTorch/')
+# Add MediaPipePyTorch to Python path
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.dirname(current_dir)
+mediapipe_path = os.path.join(project_root, 'MediaPipePyTorch')
+sys.path.append(mediapipe_path)
+
 from blazepose import *
 from blazepose_landmark import *
 
