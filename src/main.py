@@ -86,52 +86,66 @@ def main(page: ft.Page):
     page.horizontal_alignment = ft.CrossAxisAlignment.CENTER
     page.theme_mode = ft.ThemeMode.DARK
     page.padding = 10  # Reduced padding
-    page.window_width = 1000
-    page.window_height = 800
+    page.window_maximized = True
     page.bgcolor = "#181A20"
 
-    # --- Animation Control ---
-    stop_gradient_animation = threading.Event()
+    # Use Inter (modern sans-serif) as the main font
+    page.fonts = {
+        "Inter": "https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap"
+    }
+    page.theme = ft.Theme(font_family="Inter")
 
-    # Simplified gradient background
-    gradient = ft.LinearGradient(
+    # Clean Google-inspired gradient (subtle)
+    static_gradient = ft.LinearGradient(
         begin=ft.alignment.top_center,
         end=ft.alignment.bottom_center,
+        colors=[
+            "#f8f9fa",  # Very light gray
+            "#ffffff",  # White
+        ],
+        stops=[0.0, 1.0]
+    )
+
+    # Animated gradient for splash screen (radial ripple)
+    splash_gradient = ft.RadialGradient(
+        center=ft.alignment.center,
+        radius=0.6,
         colors=[
             "#1a237e",  # Deep Blue
             "#9c27b0",  # Lavender
         ],
         stops=[0.0, 1.0]
     )
-    page.gradient = gradient
 
     def animate_gradient(is_splash_screen=False):
         import math
-        
         last_update = time.time()
-        update_interval = 0.1  # 10 FPS
-        
-        while not stop_gradient_animation.is_set():
+        update_interval = 0.016  # ~60 FPS for smoothness
+        start_time = time.time()
+        while True:
             current_time = time.time()
             if current_time - last_update < update_interval:
-                time.sleep(0.01)  # Small sleep to prevent CPU hogging
+                time.sleep(0.005)
                 continue
-                
             if is_splash_screen:
-                t = current_time * 5
-                x = math.sin(t) * 0.1
-                y = math.cos(t) * 0.1
-            else:
-                t = current_time * 0.2
-                x = math.sin(t) * 0.05
-                y = math.cos(t) * 0.05
-            
-            # Only update if values have changed significantly
-            if abs(gradient.begin.x - (x + 0.5)) > 0.01 or abs(gradient.begin.y - (y + 0.5)) > 0.01:
-                gradient.begin = ft.alignment.Alignment(x + 0.5, y + 0.5)
-                gradient.end = ft.alignment.Alignment(x + 0.5, y + 0.5)
+                elapsed = current_time - start_time
+                duration = 8.0
+                if elapsed > duration:
+                    break
+                # Animate ripple: radius grows from 0.1 to 1.0, color fades out
+                ripple_radius = 0.1 + 0.9 * (elapsed / duration)
+                fade = max(0.0, 1.0 - (elapsed / duration))
+                splash_gradient.radius = ripple_radius
+                # Use hex colors with opacity for Flet compatibility, sharper ripple
+                fade_hex = ft.Colors.with_opacity(fade, "#1a237e")
+                fade_hex2 = ft.Colors.with_opacity(fade, "#1a237e")
+                transparent = ft.Colors.with_opacity(0.0, "#1a237e")
+                splash_gradient.colors = [fade_hex, fade_hex2, transparent]
+                splash_gradient.stops = [0.0, 0.85, 1.0]
                 page.update()
                 last_update = current_time
+            else:
+                time.sleep(0.1)
 
     def update_ui_safely(control, **kwargs):
         """Safely update UI controls with rate limiting"""
@@ -176,14 +190,7 @@ def main(page: ft.Page):
         update_ui_safely(video_image, opacity=1)
 
     # Start gradient animation in a background thread
-    threading.Thread(target=lambda: animate_gradient(False), daemon=True, name="MainAnimation").start()
-
-    # Font setup (using system fonts where possible)
-    page.fonts = {
-        "Roboto": "https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap",  # Reduced variants
-        "Playfair Display": "https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&display=swap"  # Reduced variants
-    }
-    page.theme = ft.Theme(font_family="Playfair Display")
+    threading.Thread(target=lambda: animate_gradient(False), daemon=True).start()
 
     # State
     camera_active = False
@@ -274,11 +281,9 @@ def main(page: ft.Page):
             ft.dropdown.Option("Jazz"), ft.dropdown.Option("Classical"), ft.dropdown.Option("Folk"),
         ],
         width=200,
-        # Adding some theming for dropdowns
-        border_color=ft.Colors.BLUE_ACCENT_100,
-        focused_border_color=ft.Colors.PURPLE_ACCENT,
-        label_style=ft.TextStyle(font_family="Playfair Display"),
-        # content_padding=10 # Flet dropdowns might not have direct content_padding like this for options
+        border_color="#1a73e8",
+        focused_border_color="#8430ce",
+        label_style=ft.TextStyle(font_family="Inter"),
     )
 
     dd_role = ft.Dropdown(
@@ -289,9 +294,9 @@ def main(page: ft.Page):
             ft.dropdown.Option("Chorus Singer"),
         ],
         width=200,
-        border_color=ft.Colors.BLUE_ACCENT_100,
-        focused_border_color=ft.Colors.PURPLE_ACCENT,
-        label_style=ft.TextStyle(font_family="Playfair Display"),
+        border_color="#1a73e8",
+        focused_border_color="#8430ce",
+        label_style=ft.TextStyle(font_family="Inter"),
     )
 
     dd_range = ft.Dropdown(
@@ -302,9 +307,9 @@ def main(page: ft.Page):
             ft.dropdown.Option("Tenor"), ft.dropdown.Option("Baritone"), ft.dropdown.Option("Bass"),
         ],
         width=200,
-        border_color=ft.Colors.BLUE_ACCENT_100,
-        focused_border_color=ft.Colors.PURPLE_ACCENT,
-        label_style=ft.TextStyle(font_family="Playfair Display"),
+        border_color="#1a73e8",
+        focused_border_color="#8430ce",
+        label_style=ft.TextStyle(font_family="Inter"),
     )
 
     config_controls = ft.Row(
@@ -447,30 +452,29 @@ def main(page: ft.Page):
         "Posture analysis, vocal feedback, and personalized suggestions will appear here...",
         size=14,
         italic=True,
-        font_family="Playfair Display",
-        color=ft.Colors.BLUE_GREY_200
+        color="#5f6368"
     )
     
     feedback_container = ft.Container(
         content=ft.Column(
             controls=[
-                ft.Text("Real-time Feedback & Coaching", size=20, weight=ft.FontWeight.BOLD, font_family="Playfair Display", color=ft.Colors.CYAN_ACCENT_100),
-                ft.Divider(color=ft.Colors.with_opacity(0.5, ft.Colors.BLUE_ACCENT_100)),
+                ft.Text("Real-time Feedback & Coaching", size=20, weight=ft.FontWeight.BOLD, color="#1a73e8"),
+                ft.Divider(color=ft.Colors.with_opacity(0.5, "#8430ce")),
                 feedback_text_area
             ],
             scroll=ft.ScrollMode.AUTO,
             spacing=10
         ),
         expand=True,
-        bgcolor="#1AFFFFFF", # More subtle background (was ft.Colors.with_opacity(0.1, ft.Colors.WHITE10))
-        border=ft.border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.PURPLE_ACCENT_100)),
+        bgcolor="#1AFFFFFF",
+        border=ft.border.all(1, ft.Colors.with_opacity(0.3, "#8430ce")),
         border_radius=10,
         padding=15,
         margin=ft.margin.only(top=20),
         shadow=ft.BoxShadow(
             spread_radius=1,
             blur_radius=10,
-            color=ft.Colors.with_opacity(0.2, ft.Colors.BLACK),
+            color=ft.Colors.with_opacity(0.2, "#000000"),
             offset=ft.Offset(2, 2)
         )
     )
@@ -496,21 +500,21 @@ def main(page: ft.Page):
     def create_placeholder_container(title_text, content_widget=None):
         return ft.Container(
             content=ft.Column([
-                ft.Text(title_text, theme_style=ft.TextThemeStyle.TITLE_MEDIUM, font_family="Playfair Display", color=ft.Colors.LIGHT_BLUE_100),
-                ft.Divider(color=ft.Colors.with_opacity(0.3, ft.Colors.BLUE_ACCENT_100)),
+                ft.Text(title_text, theme_style=ft.TextThemeStyle.TITLE_MEDIUM, font_family="Inter", color="#1a73e8"),
+                ft.Divider(color=ft.Colors.with_opacity(0.3, "#8430ce")),
                 content_widget if content_widget else ft.Container(height=5)
             ]),
             padding=15, 
             bgcolor="#3DFFFFFF",
             border_radius=8, 
             margin=ft.margin.only(top=10),
-            shadow=ft.BoxShadow(blur_radius=5, color=ft.Colors.with_opacity(0.1, ft.Colors.BLACK))
+            shadow=ft.BoxShadow(blur_radius=5, color=ft.Colors.with_opacity(0.1, "#000000"))
         )
 
     def create_other_features_column():
         progress_tracker_placeholder = create_placeholder_container(
             "Progress Tracker Area",
-            ft.Text("Your improvements and session history will be shown here.", font_family="Playfair Display", color=ft.Colors.BLUE_GREY_300)
+            ft.Text("Your improvements and session history will be shown here.", font_family="Inter", color="#5f6368")
         )
         
         warmup_exercises_placeholder = create_placeholder_container(
@@ -518,7 +522,7 @@ def main(page: ft.Page):
             ft.ElevatedButton(
                 "Generate Warmup", 
                 icon=ft.Icons.FITNESS_CENTER, 
-                style=ft.ButtonStyle(bgcolor=ft.Colors.TEAL_ACCENT_700, color=ft.Colors.WHITE),
+                style=ft.ButtonStyle(bgcolor="#8430ce", color="#ffffff"),
                 on_hover=on_hover_animation,
                 scale=ft.Scale(1), animate_scale=ft.Animation(300, "easeOutCubic")
             )
@@ -526,13 +530,13 @@ def main(page: ft.Page):
 
         community_features_placeholder = create_placeholder_container(
             "Community Features (Blog, Messaging, etc.)",
-            ft.Text("Connect with others, share insights, and get expert advice.", font_family="Playfair Display", color=ft.Colors.BLUE_GREY_300)
+            ft.Text("Connect with others, share insights, and get expert advice.", font_family="Inter", color="#5f6368")
         )
 
         return ft.Column(
             controls=[
-                ft.Divider(height=20, thickness=1, color=ft.Colors.with_opacity(0.5, ft.Colors.BLUE_ACCENT_200)),
-                ft.Text("More Tools & Features", theme_style=ft.TextThemeStyle.HEADLINE_SMALL, font_family="Playfair Display", color=ft.Colors.CYAN_ACCENT_200),
+                ft.Divider(height=20, thickness=1, color=ft.Colors.with_opacity(0.5, "#8430ce")),
+                ft.Text("More Tools & Features", theme_style=ft.TextThemeStyle.HEADLINE_SMALL, font_family="Inter", color="#1a73e8"),
                 progress_tracker_placeholder,
                 warmup_exercises_placeholder,
                 community_features_placeholder
@@ -556,10 +560,10 @@ def main(page: ft.Page):
     # --- Overall Page Layout ---
     page_content = ft.Column(
         controls=[
-            ft.Text("VOXURE", theme_style=ft.TextThemeStyle.DISPLAY_SMALL, weight=ft.FontWeight.BOLD, font_family="Playfair Display", color="#00E5FF",
-                      spans=[ft.TextSpan("™", ft.TextStyle(size=12, font_family="Playfair Display", color="#00E5FF", weight=ft.FontWeight.NORMAL))]
+            ft.Text("VOXURE", theme_style=ft.TextThemeStyle.DISPLAY_SMALL, weight=ft.FontWeight.BOLD, font_family="Inter", color="#00E5FF",
+                      spans=[ft.TextSpan("™", ft.TextStyle(size=12, font_family="Inter", color="#00E5FF", weight=ft.FontWeight.NORMAL))]
             ),
-            ft.Text("Your Personal AI Vocal Coach", theme_style=ft.TextThemeStyle.TITLE_LARGE, font_family="Playfair Display", color=ft.Colors.BLUE_GREY_100, weight=ft.FontWeight.W_300, text_align=ft.TextAlign.CENTER),
+            ft.Text("Your Personal AI Vocal Coach", theme_style=ft.TextThemeStyle.TITLE_LARGE, font_family="Inter", color=ft.Colors.BLUE_GREY_100, weight=ft.FontWeight.W_300, text_align=ft.TextAlign.CENTER),
             ft.Divider(height=30, thickness=1, color=ft.Colors.with_opacity(0.7, ft.Colors.BLUE_ACCENT_700)),
             main_content,
         ],
@@ -598,137 +602,370 @@ def main(page: ft.Page):
 
     # --- Splash Screen ---
     def splash_screen():
-        # Stop the regular animation and start the speaker-like animation
-        stop_gradient_animation.set()
-        for thread in threading.enumerate():
-            if thread.name == "MainAnimation":
-                thread.join()  # Wait for the thread to finish
-        stop_gradient_animation.clear()
-        
-        # Start the speaker-like animation
-        threading.Thread(target=lambda: animate_gradient(True), daemon=True, name="SplashAnimation").start()
+        # Create concentric circles that pulse outward
+        def animate_concentric_circles():
+            start_time = time.time()
+            while True:
+                now = time.time()
+                elapsed = now - start_time
+                if elapsed > 6.0:  # Animation duration
+                    break
+                
+                # Update circle opacities with pulsing effect
+                pulse = (math.sin(elapsed * 3) + 1) / 2  # Oscillate between 0.0 and 1.0
+                for i, circle in enumerate(concentric_circles):
+                    delay = i * 0.15  # Stagger the pulse effect
+                    circle_pulse = max(0.2, pulse - delay * 0.1)
+                    circle.border = ft.border.all(
+                        width=2,
+                        color=ft.Colors.with_opacity(circle_pulse, "#1a73e8")
+                    )
+                
+                page.update()
+                time.sleep(0.033)  # 30 FPS for smooth animation
+            
+            # Navigate to next screen
+            page.go("/users")
 
+        # Create the microphone design
+        def create_microphone():
+            # Microphone head (grille)
+            mic_head = ft.Container(
+                width=60,
+                height=80,
+                bgcolor="#2C2C54",
+                border_radius=30,
+                border=ft.border.all(3, "#1a73e8"),
+                content=ft.Column([
+                    ft.Container(height=8),  # Top spacing
+                    # Grille lines
+                    ft.Container(width=45, height=2, bgcolor="#8430ce", border_radius=1),
+                    ft.Container(height=4),
+                    ft.Container(width=45, height=2, bgcolor="#8430ce", border_radius=1),
+                    ft.Container(height=4),
+                    ft.Container(width=45, height=2, bgcolor="#8430ce", border_radius=1),
+                    ft.Container(height=4),
+                    ft.Container(width=45, height=2, bgcolor="#8430ce", border_radius=1),
+                    ft.Container(height=4),
+                    ft.Container(width=45, height=2, bgcolor="#8430ce", border_radius=1),
+                    ft.Container(height=4),
+                    ft.Container(width=45, height=2, bgcolor="#8430ce", border_radius=1),
+                    ft.Container(height=8),  # Bottom spacing
+                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                alignment=ft.alignment.center
+            )
+            
+            # Microphone body/handle
+            mic_body = ft.Container(
+                width=35,
+                height=60,
+                bgcolor="#1a1a2e",
+                border_radius=3,
+                border=ft.border.all(2, "#16213e"),
+                content=ft.Column([
+                    ft.Container(height=8),
+                    # Control buttons/indicators
+                    ft.Container(
+                        width=25,
+                        height=8,
+                        bgcolor="#1a73e8",
+                        border_radius=4,
+                    ),
+                    ft.Container(height=6),
+                    ft.Container(
+                        width=20,
+                        height=6,
+                        bgcolor="#8430ce",
+                        border_radius=3,
+                    ),
+                    ft.Container(height=6),
+                    # Brand/model indicator
+                    ft.Container(
+                        width=15,
+                        height=4,
+                        bgcolor="#40407a",
+                        border_radius=2,
+                    ),
+                ], alignment=ft.MainAxisAlignment.START, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                alignment=ft.alignment.center
+            )
+            
+            # Main microphone container
+            microphone = ft.Container(
+                width=70,
+                height=160,
+                content=ft.Column([
+                    mic_head,
+                    mic_body,  # Remove gap to connect head and body
+                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
+                alignment=ft.alignment.center
+            )
+            
+            return microphone
+
+        # Create concentric circles (properly sized for microphone)
+        circle_sizes = [180, 220, 260, 300, 340, 380]
+        concentric_circles = []
+        
+        for size in circle_sizes:
+            circle = ft.Container(
+                width=size,
+                height=size,
+                bgcolor="transparent",
+                border_radius=size // 2,
+                border=ft.border.all(width=2, color=ft.Colors.with_opacity(0.4, "#1a73e8")),
+                alignment=ft.alignment.center
+            )
+            concentric_circles.append(circle)
+
+        # Text elements
         voxure_text = ft.Text(
             "Voxure",
             size=50,
             weight=ft.FontWeight.BOLD,
-            color="#00E5FF",
+            color="#1a73e8",
             opacity=0,
-            animate_opacity=ft.Animation(500, "easeInOut"),  # Faster animation
+            animate_opacity=ft.Animation(500, "easeInOut"),
         )
         tagline_text = ft.Text(
             "Your voice, your choice.",
             size=24,
-            color="#00E5FF",
+            color="#8430ce",
             opacity=0,
-            animate_opacity=ft.Animation(500, "easeInOut"),  # Faster animation
+            animate_opacity=ft.Animation(500, "easeInOut"),
         )
 
+        # Fade in text sequence
         def fade_in_sequence():
-            time.sleep(0.2)  # Reduced delay
+            time.sleep(0.5)
             voxure_text.opacity = 1
             page.update()
-            time.sleep(0.5)  # Reduced delay
+            time.sleep(0.7)
             tagline_text.opacity = 1
             page.update()
-            time.sleep(0.8)  # Reduced delay
-            # Stop the speaker-like animation and restart the regular animation
-            stop_gradient_animation.set()
-            for thread in threading.enumerate():
-                if thread.name == "SplashAnimation":
-                    thread.join() # Wait for the thread to finish
-            stop_gradient_animation.clear()
-            threading.Thread(target=lambda: animate_gradient(False), daemon=True, name="MainAnimation").start()
-            page.go("/users")
-
-        # Start the fade-in sequence in a background thread
+        
+        # Start animations
         threading.Thread(target=fade_in_sequence, daemon=True).start()
+        threading.Thread(target=animate_concentric_circles, daemon=True).start()
+
+        # Create the centered design with concentric circles
+        microphone = create_microphone()
+        
+        # Stack all circles with the microphone in the center
+        circle_stack = ft.Stack(
+            controls=[
+                *reversed(concentric_circles),  # Largest circles first (background)
+                microphone  # Microphone on top
+            ],
+            alignment=ft.alignment.center
+        )
+
+        splash_content = ft.Container(
+            content=ft.Column([
+                ft.Container(height=20),  # Top spacer
+                circle_stack,
+                ft.Container(height=40),  # Reduced spacing
+                voxure_text,
+                tagline_text,
+                ft.Container(height=20),  # Bottom spacer
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            expand=True,
+            spacing=15),  # Reduced spacing
+            alignment=ft.alignment.center,
+            expand=True
+        )
 
         return ft.View(
             "/",
             controls=[
                 ft.Container(
-                    content=ft.Column(
-                        [voxure_text, tagline_text],
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
+                    content=splash_content,
                     alignment=ft.alignment.center,
                     expand=True,
-                    bgcolor="#181A20",
+                    bgcolor="#181A20",  # Dark background to match the image
                 )
-            ],
+            ]
         )
 
     # --- User Selection Screen ---
     def user_selection_screen():
         users = load_users()
-        user_avatars = [
-            ft.Container(
-                content=ft.Column([
+        all_options = users + [{"name": "Add User", "is_add_user": True}]
+        
+        # Use page session for state management
+        if not page.session.contains_key("current_user_index"):
+            page.session.set("current_user_index", 0)
+        
+        current_index = page.session.get("current_user_index")
+        
+        def update_display():
+            current_index = page.session.get("current_user_index")
+            if current_index < len(users):
+                user = users[current_index]
+                content = ft.Column([
                     ft.CircleAvatar(
-                        content=ft.Icon(ft.Icons.MUSIC_NOTE, size=40, color=ft.Colors.PURPLE_ACCENT),
+                        content=ft.Icon(ft.Icons.MUSIC_NOTE, size=32, color="#ffffff"),
                         radius=40,
-                        bgcolor=ft.Colors.BLUE_ACCENT_100
+                        bgcolor="#1a73e8"
                     ),
-                    ft.Text(user["name"], size=16, color="#00E5FF", text_align=ft.TextAlign.CENTER)
-                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                on_click=lambda e, u=user: select_user(u),
-                margin=10,
-                tooltip=f"{user['name']} ({user.get('singer_type','?')})"
-            )
-            for user in users
-        ]
-        add_user_btn = ft.Container(
-            content=ft.Column([
-                ft.CircleAvatar(
-                    content=ft.Icon(ft.Icons.ADD, size=40, color=ft.Colors.WHITE),
-                    radius=40,
-                    bgcolor=ft.Colors.PURPLE_ACCENT
-                ),
-                ft.Text("Add User", size=16, color="#00E5FF", text_align=ft.TextAlign.CENTER)
-            ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-            on_click=lambda e: page.go("/create_user"),
-            margin=10,
-            tooltip="Add new user"
+                    ft.Text(user["name"], size=18, color="#202124", text_align=ft.TextAlign.CENTER, font_family="Inter", weight=ft.FontWeight.W_500)
+                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=16)
+                click_handler = lambda e, u=user: select_user(u)
+            else:
+                content = ft.Column([
+                    ft.CircleAvatar(
+                        content=ft.Icon(ft.Icons.ADD, size=32, color="#ffffff"),
+                        radius=40,
+                        bgcolor="#8430ce"
+                    ),
+                    ft.Text("Add User", size=18, color="#202124", text_align=ft.TextAlign.CENTER, font_family="Inter", weight=ft.FontWeight.W_500)
+                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=16)
+                click_handler = lambda e: page.go("/create_user")
+            
+            return content, click_handler
+        
+        def go_previous(e):
+            current_index = page.session.get("current_user_index")
+            if current_index > 0:
+                page.session.set("current_user_index", current_index - 1)
+                # Force page update instead of navigation
+                page.views.clear()
+                page.views.append(user_selection_screen())
+                page.update()
+        
+        def go_next(e):
+            current_index = page.session.get("current_user_index")
+            if current_index < len(all_options) - 1:
+                page.session.set("current_user_index", current_index + 1)
+                # Force page update instead of navigation
+                page.views.clear()
+                page.views.append(user_selection_screen())
+                page.update()
+        
+        content, click_handler = update_display()
+        
+        # Navigation buttons
+        left_arrow = ft.IconButton(
+            icon=ft.Icons.ARROW_BACK_IOS,
+            icon_size=32,
+            icon_color="#1a73e8" if current_index > 0 else "#9e9e9e",
+            on_click=go_previous,
+            disabled=current_index == 0,
+            tooltip="Previous profile"
         )
+        
+        right_arrow = ft.IconButton(
+            icon=ft.Icons.ARROW_FORWARD_IOS,
+            icon_size=32,
+            icon_color="#1a73e8" if current_index < len(all_options) - 1 else "#9e9e9e",
+            on_click=go_next,
+            disabled=current_index >= len(all_options) - 1,
+            tooltip="Next profile"
+        )
+        
+        # Current user container
+        user_container = ft.Container(
+            content=content,
+            padding=ft.padding.all(40),
+            border_radius=24,
+            bgcolor="#ffffff",
+            shadow=ft.BoxShadow(blur_radius=8, color=ft.Colors.with_opacity(0.08, "#000000"), offset=ft.Offset(0, 2)),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.12, "#000000")),
+            width=300,
+            height=200,
+            ink=True,
+            on_click=click_handler
+        )
+        
         return ft.View(
             "/users",
             controls=[
-                ft.Column([
-                    ft.Text("Select Your Profile", size=30, weight=ft.FontWeight.BOLD, color="#00E5FF"),
-                    ft.Row(user_avatars + [add_user_btn], alignment=ft.MainAxisAlignment.CENTER, expand=True)
-                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Select Your Profile", size=32, weight=ft.FontWeight.W_400, color="#202124", font_family="Inter", text_align=ft.TextAlign.CENTER),
+                        ft.Container(height=48),
+                        ft.Row([
+                            left_arrow,
+                            ft.Container(width=32),
+                            user_container,
+                            ft.Container(width=32),
+                            right_arrow
+                        ], alignment=ft.MainAxisAlignment.CENTER),
+                        ft.Container(height=32),
+                        ft.Text(f"{current_index + 1} of {len(all_options)}", size=14, color="#5f6368", font_family="Inter", text_align=ft.TextAlign.CENTER) if len(all_options) > 1 else ft.Container()
+                    ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True),
+                    expand=True,
+                    alignment=ft.alignment.center,
+                    padding=ft.padding.all(40),
+                    bgcolor=None,
+                    gradient=static_gradient
+                )
             ]
         )
 
     # --- Create User Screen ---
     def create_user_screen():
-        name_field = ft.TextField(label="Name")
-        age_field = ft.TextField(label="Age")
+        name_field = ft.TextField(label="Name", prefix_icon=ft.Icons.PERSON, width=350, filled=True)
+        age_field = ft.TextField(label="Age", prefix_icon=ft.Icons.CAKE, width=350, filled=True)
         singer_type_field = ft.Dropdown(
             label="Singer Type",
             options=[ft.dropdown.Option(x) for x in ["Soprano", "Mezzo-Soprano", "Alto", "Tenor", "Baritone", "Bass"]],
+            prefix_icon=ft.Icons.MIC,
+            width=350,
+            filled=True
         )
-        genres_practiced_field = ft.TextField(label="Genres Practiced (comma separated)")
-        genres_learn_field = ft.TextField(label="Genres to Learn (comma separated)")
-        goals_field = ft.TextField(label="Voice Improvement Goals", multiline=True)
+        genres_practiced_field = ft.TextField(label="Genres Practiced (comma separated)", prefix_icon=ft.Icons.MUSIC_NOTE, width=350, filled=True)
+        genres_learn_field = ft.TextField(label="Genres to Learn (comma separated)", prefix_icon=ft.Icons.LIBRARY_MUSIC, width=350, filled=True)
+        goals_field = ft.TextField(label="Voice Improvement Goals", multiline=True, prefix_icon=ft.Icons.FLAG, width=350, filled=True)
         submit_btn = ft.ElevatedButton(
             text="Create Profile",
+            icon=ft.Icons.CHECK_CIRCLE,
+            style=ft.ButtonStyle(bgcolor=ft.Colors.PURPLE_ACCENT_700, color=ft.Colors.WHITE, padding=15, shape=ft.RoundedRectangleBorder(radius=8)),
+            width=200,
+            height=50,
+            scale=ft.Scale(1.05),
             on_click=lambda e: save_new_user(
                 name_field.value, age_field.value, singer_type_field.value,
                 genres_practiced_field.value, genres_learn_field.value, goals_field.value
             )
         )
+        form_card = ft.Container(
+            content=ft.Column([
+                ft.Text("Create New User", size=28, weight=ft.FontWeight.BOLD, color="#00E5FF", font_family="Inter", text_align=ft.TextAlign.CENTER),
+                ft.Divider(color=ft.Colors.with_opacity(0.2, ft.Colors.PURPLE_ACCENT)),
+                name_field,
+                age_field,
+                singer_type_field,
+                ft.Divider(height=10, color="transparent"),
+                genres_practiced_field,
+                genres_learn_field,
+                goals_field,
+                ft.Container(height=20),
+                submit_btn
+            ],
+            alignment=ft.MainAxisAlignment.CENTER,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=18,
+            expand=True),
+            padding=30,
+            width=420,
+            bgcolor=ft.Colors.with_opacity(0.95, ft.Colors.BLUE_GREY_900),
+            border_radius=16,
+            shadow=ft.BoxShadow(blur_radius=18, color=ft.Colors.with_opacity(0.18, ft.Colors.PURPLE_ACCENT)),
+            alignment=ft.alignment.center
+        )
         return ft.View(
             "/create_user",
             controls=[
-                ft.Column([
-                    ft.Text("Create New User", size=30, weight=ft.FontWeight.BOLD, color="#00E5FF"),
-                    name_field, age_field, singer_type_field,
-                    genres_practiced_field, genres_learn_field, goals_field,
-                    submit_btn
-                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
+                ft.Container(
+                    content=form_card,
+                    alignment=ft.alignment.center,
+                    expand=True,
+                    bgcolor=None,
+                    gradient=static_gradient
+                )
             ]
         )
 
@@ -807,10 +1044,9 @@ def main(page: ft.Page):
         def on_upload_video(e):
             setattr(overlay, 'open', False)
             page.update()
-            file_picker.pick_files(
-                dialog_title="Select a video to analyze",
-                allowed_extensions=["mp4", "mov", "avi", "webm"]
-            )
+            page.open(dialog) 
+            threading.Thread(target=animate, daemon=True).start()
+            
             # Wait a short moment before navigating
             def delayed_nav():
                 time.sleep(0.1)
@@ -832,32 +1068,54 @@ def main(page: ft.Page):
         )
         
         user = page.session.get("selected_user")
-        # Left: Navigation
         nav_buttons = ft.Column([
-            ft.ElevatedButton("Practice and Learn", icon=ft.Icons.MIC, on_click=lambda e: page.open(overlay)),
-            ft.ElevatedButton("Your Vocal Journal", icon=ft.Icons.BOOK, on_click=lambda e: page.go("/journal")),
-        ], alignment=ft.MainAxisAlignment.START, spacing=20)
-        # Right: Progress plot (placeholder image)
+            ft.ElevatedButton("Practice and Learn", icon=ft.Icons.MIC, on_click=lambda e: page.open(overlay), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=24), bgcolor="#1a73e8", color="#ffffff", padding=16, elevation=2)),
+            ft.ElevatedButton("Your Vocal Journal", icon=ft.Icons.BOOK, on_click=lambda e: page.go("/journal"), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=24), bgcolor="#8430ce", color="#ffffff", padding=16, elevation=2)),
+        ], alignment=ft.MainAxisAlignment.START, spacing=16)
         progress_plot = ft.Image(
             src="https://quickchart.io/chart?c={type:'line',data:{labels:['Jan','Feb','Mar'],datasets:[{label:'Progress',data:[1,2,3]}]}}",
-            width=400, height=300, fit=ft.ImageFit.CONTAIN
+            width=400, height=250, fit=ft.ImageFit.CONTAIN
+        )
+        user_card = ft.Container(
+            content=ft.Column([
+                ft.Text(f"Welcome, {user['name']}!", size=28, color="#202124", font_family="Inter", weight=ft.FontWeight.W_400),
+                ft.Text(f"Singer Type: {user['singer_type']}", color="#5f6368", font_family="Inter", size=16),
+                ft.Container(height=24),
+                ft.Text("Your Progress", size=20, color="#1a73e8", font_family="Inter", weight=ft.FontWeight.W_500),
+                ft.Container(height=16),
+                progress_plot
+            ], spacing=8),
+            padding=32,
+            bgcolor="#ffffff",
+            border_radius=12,
+            shadow=ft.BoxShadow(blur_radius=8, color=ft.Colors.with_opacity(0.08, "#000000"), offset=ft.Offset(0, 2)),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.12, "#000000")),
+            expand=True
+        )
+        nav_card = ft.Container(
+            content=nav_buttons,
+            width=200,
+            bgcolor="#ffffff",
+            border_radius=12,
+            padding=24,
+            shadow=ft.BoxShadow(blur_radius=8, color=ft.Colors.with_opacity(0.08, "#000000"), offset=ft.Offset(0, 2)),
+            border=ft.border.all(1, ft.Colors.with_opacity(0.12, "#000000"))
         )
         return ft.View(
             "/home",
             controls=[
-                ft.Row([
-                    ft.Container(nav_buttons, width=250, bgcolor="#23272F", border_radius=10, padding=20),
-                    ft.VerticalDivider(width=20),
-                    ft.Container(
-                        ft.Column([
-                            ft.Text(f"Welcome, {user['name']}!", size=24, color="#00E5FF"),
-                            ft.Text(f"Singer Type: {user['singer_type']}", color="#00E5FF"),
-                            ft.Text("Your Progress", size=18, color="#00E5FF"),
-                            progress_plot
-                        ], spacing=10),
-                        expand=True, bgcolor="#181A20", border_radius=10, padding=20
-                    )
-                ], expand=True, alignment=ft.MainAxisAlignment.CENTER)
+                ft.Container(
+                    content=ft.Row([
+                        nav_card,
+                        ft.Container(width=32),
+                        user_card
+                    ], expand=True, alignment=ft.MainAxisAlignment.CENTER),
+                    expand=True,
+                    alignment=ft.alignment.center,
+                    padding=ft.padding.all(40),
+                    bgcolor=None,
+                    gradient=static_gradient
+                )
             ]
         )
 
@@ -883,11 +1141,16 @@ def main(page: ft.Page):
         return ft.View(
             "/record",
             controls=[
-                ft.Column([
-                    video_placeholder,
-                    dropdowns,
-                    controls
-                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
+                ft.Container(
+                    content=ft.Column([
+                        video_placeholder,
+                        dropdowns,
+                        controls
+                    ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True),
+                    expand=True,
+                    bgcolor=None,
+                    gradient=static_gradient  # Use static gradient
+                )
             ]
         )
 
@@ -931,11 +1194,16 @@ def main(page: ft.Page):
         return ft.View(
             "/summary",
             controls=[
-                ft.Column([
-                    ft.Text("Summary", size=30, weight=ft.FontWeight.BOLD, color="#00E5FF"),
-                    summary_text,
-                    save_btn
-                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Summary", size=30, weight=ft.FontWeight.BOLD, color="#00E5FF", font_family="Inter"),
+                        summary_text,
+                        save_btn
+                    ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True),
+                    expand=True,
+                    bgcolor=None,
+                    gradient=static_gradient  # Use static gradient
+                )
             ]
         )
 
@@ -979,10 +1247,15 @@ def main(page: ft.Page):
         return ft.View(
             "/journal",
             controls=[
-                ft.Column([
-                    ft.Text("Your Vocal Journal", size=30, weight=ft.FontWeight.BOLD, color="#00E5FF"),
-                    ft.Column(entry_controls, scroll=ft.ScrollMode.AUTO, expand=True)
-                ], alignment=ft.MainAxisAlignment.START, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text("Your Vocal Journal", size=30, weight=ft.FontWeight.BOLD, color="#00E5FF", font_family="Inter"),
+                        ft.Column(entry_controls, scroll=ft.ScrollMode.AUTO, expand=True)
+                    ], alignment=ft.MainAxisAlignment.START, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True),
+                    expand=True,
+                    bgcolor=None,
+                    gradient=static_gradient  # Use static gradient
+                )
             ]
         )
 
@@ -1015,16 +1288,21 @@ def main(page: ft.Page):
         return ft.View(
             "/journal_entry",
             controls=[
-                ft.Column([
-                    ft.Text(f"Journal Entry: {entry['date']}", size=24, color="#00E5FF"),
-                    ft.Text("Summary:", size=18, color="#00E5FF"),
-                    ft.Text(entry["summary"], size=16),
-                    ft.Text("Critique:", size=18, color="#00E5FF"),
-                    ft.Column(critique_bubbles, scroll=ft.ScrollMode.AUTO, height=200),
-                    ft.Text("Video (placeholder):", size=18, color="#00E5FF"),
-                    ft.Image(src="https://via.placeholder.com/400x300?text=Performance+Video", width=400, height=300),
-                    ft.ElevatedButton("Back to Journal", on_click=lambda e: page.go("/journal"))
-                ], alignment=ft.MainAxisAlignment.START, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
+                ft.Container(
+                    content=ft.Column([
+                        ft.Text(f"Journal Entry: {entry['date']}", size=24, color="#00E5FF", font_family="Inter"),
+                        ft.Text("Summary:", size=18, color="#00E5FF", font_family="Inter"),
+                        ft.Text(entry["summary"], size=16, font_family="Inter"),
+                        ft.Text("Critique:", size=18, color="#00E5FF", font_family="Inter"),
+                        ft.Column(critique_bubbles, scroll=ft.ScrollMode.AUTO, height=200),
+                        ft.Text("Video (placeholder):", size=18, color="#00E5FF", font_family="Inter"),
+                        ft.Image(src="https://via.placeholder.com/400x300?text=Performance+Video", width=400, height=300),
+                        ft.ElevatedButton("Back to Journal", on_click=lambda e: page.go("/journal"))
+                    ], alignment=ft.MainAxisAlignment.START, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True),
+                    expand=True,
+                    bgcolor=None,
+                    gradient=static_gradient  # Use static gradient
+                )
             ]
         )
 
