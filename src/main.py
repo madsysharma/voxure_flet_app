@@ -204,20 +204,25 @@ def main(page: ft.Page):
 
     # --- File Picker for Video Upload ---
     def on_file_picked(e: ft.FilePickerResultEvent):
+        if page.route not in ["/home", "/"]:
+            return
         nonlocal uploaded_video_path
         if e.files:
             selected_file = e.files[0]
             uploaded_video_path = selected_file.path
-            feedback_text_area.value = f"Selected video: {selected_file.name}\nReady for analysis."
-            # Extract and show first frame
-            cap = get_import('cv2').VideoCapture(uploaded_video_path)
-            ret, frame = cap.read()
-            cap.release()
-            if ret:
-                update_video_image_from_frame(frame)
-            else:
-                feedback_text_area.value += "\nFailed to load video frame."
-            feedback_text_area.update()
+            try:
+                feedback_text_area.value = f"Selected video: {selected_file.name}\nReady for analysis."
+                # Extract and show first frame
+                cap = get_import('cv2').VideoCapture(uploaded_video_path)
+                ret, frame = cap.read()
+                cap.release()
+                if ret:
+                    update_video_image_from_frame(frame)
+                else:
+                    feedback_text_area.value += "\nFailed to load video frame."
+                feedback_text_area.update()
+            except (AssertionError, AttributeError):
+                print(f"Video selected: {selected_file.name}")
 
             # --- Prompt user for lyrics and performance description ---
             lyrics_field = ft.TextField(label="Lyrics", multiline=True, width=400)
@@ -225,13 +230,14 @@ def main(page: ft.Page):
             def on_submit_critique(ev):
                 lyrics = lyrics_field.value
                 performance_description = desc_field.value
-                # Optionally, auto-extract from video/audio here
-                # lyrics, performance_description = auto_extract(uploaded_video_path)
-                feedback_text_area.value = "Generating AI critique..."
-                feedback_text_area.update()
-                critique, entry = invoke_critique(lyrics, performance_description, video_path=uploaded_video_path)
-                feedback_text_area.value = f"AI Critique:\n{critique}"
-                feedback_text_area.update()
+                try:
+                    feedback_text_area.value = "Generating AI critique..."
+                    feedback_text_area.update()
+                    critique, entry = invoke_critique(lyrics, performance_description, video_path=uploaded_video_path)
+                    feedback_text_area.value = f"AI Critique:\n{critique}"
+                    feedback_text_area.update()
+                except (AssertionError, AttributeError):
+                    print("Generating AI critique...")
                 page.dialog.open = False
                 page.update()
             dialog = ft.AlertDialog(
@@ -244,8 +250,11 @@ def main(page: ft.Page):
             dialog.open = True
             page.update()
         else:
-            feedback_text_area.value = "Video selection cancelled."
-            feedback_text_area.update()
+            try:
+                feedback_text_area.value = "Video selection cancelled."
+                feedback_text_area.update()
+            except (AssertionError, AttributeError):
+                print("Video selection cancelled.")
 
     file_picker = ft.FilePicker(on_result=on_file_picked)
     page.overlay.append(file_picker) # Add file picker to page overlay
@@ -659,9 +668,9 @@ def main(page: ft.Page):
             mic_body = ft.Container(
                 width=35,
                 height=60,
-                bgcolor="#1a1a2e",
+                bgcolor="#40407a",
                 border_radius=3,
-                border=ft.border.all(2, "#16213e"),
+                border=ft.border.all(2, "#8430ce"),
                 content=ft.Column([
                     ft.Container(height=8),
                     # Control buttons/indicators
@@ -992,15 +1001,23 @@ def main(page: ft.Page):
 
     # --- Home Screen ---
     def home_screen():
-        def animate():
-            for i in range(101):
-                progress.value = i / 100
-                note_icon.icon = random.choice([ft.Icons.MUSIC_NOTE, ft.Icons.MUSIC_OFF, ft.Icons.AUDIOTRACK])
-                page.update()
-                time.sleep(0.03)
-            dialog.open = False
+        user = page.session.get("selected_user")
+        if not user:
+            page.go("/users")
+            return
+
+        def on_record_yourself(e):
+            overlay.open = False
             page.update()
-            page.go("/summary")
+            page.go("/record")
+
+        def on_upload_video(e):
+            overlay.open = False
+            page.update()
+            file_picker.pick_files(
+                allow_multiple=False,
+                allowed_extensions=["mp4", "mov", "avi", "mkv", "webm"]
+            )
 
         overlay = ft.AlertDialog(
             title=ft.Text("Practice and Learn", size=18, weight=ft.FontWeight.BOLD, color="#00E5FF"),
@@ -1011,13 +1028,13 @@ def main(page: ft.Page):
                     ft.ElevatedButton(
                         "Record Yourself",
                         icon=ft.Icons.VIDEOCAM,
-                        on_click=lambda e: on_record_yourself,
+                        on_click=on_record_yourself,
                         width=250,
                     ),
                     ft.ElevatedButton(
                         "Upload Video",
                         icon=ft.Icons.UPLOAD_FILE,
-                        on_click=lambda e: on_upload_video,
+                        on_click=on_upload_video,
                         width=250,
                     ),
                 ], spacing=12, alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
@@ -1032,42 +1049,6 @@ def main(page: ft.Page):
             title_padding=ft.padding.all(25),
         )
 
-        def on_record_yourself(e):
-            setattr(overlay, 'open', False)
-            page.update()
-            # Wait a short moment before navigating
-            def delayed_nav():
-                time.sleep(0.1)
-                page.go("/record")
-            threading.Thread(target=delayed_nav, daemon=True).start()
-
-        def on_upload_video(e):
-            setattr(overlay, 'open', False)
-            page.update()
-            page.open(dialog) 
-            threading.Thread(target=animate, daemon=True).start()
-            
-            # Wait a short moment before navigating
-            def delayed_nav():
-                time.sleep(0.1)
-                page.go("/record")
-
-            threading.Thread(target=delayed_nav, daemon=True).start()
-
-        progress = ft.ProgressBar(width=300)
-        note_icon = ft.Icon(ft.Icons.MUSIC_NOTE, size=40, color=ft.Colors.PURPLE_ACCENT)
-        dialog = ft.AlertDialog(
-            title=ft.Text("Uploading and Analyzing..."),
-            content=ft.Column([
-                progress,
-                note_icon,
-                ft.Text("Analyzing your performance...", size=16)
-            ], spacing=20,),
-            on_dismiss=lambda e: print("Dialog dismissed!"), 
-            title_padding=ft.padding.all(25),
-        )
-        
-        user = page.session.get("selected_user")
         nav_buttons = ft.Column([
             ft.ElevatedButton("Practice and Learn", icon=ft.Icons.MIC, on_click=lambda e: page.open(overlay), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=24), bgcolor="#1a73e8", color="#ffffff", padding=16, elevation=2)),
             ft.ElevatedButton("Your Vocal Journal", icon=ft.Icons.BOOK, on_click=lambda e: page.go("/journal"), style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=24), bgcolor="#8430ce", color="#ffffff", padding=16, elevation=2)),
