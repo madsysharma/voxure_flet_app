@@ -1,3 +1,4 @@
+video_image = None
 import flet as ft
 import math # For hover animation
 import threading
@@ -6,7 +7,7 @@ import json
 import os
 import sys
 from functools import lru_cache
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Tuple
 
 # Lazy imports for heavy dependencies
 _imports = {
@@ -16,7 +17,8 @@ _imports = {
     'base64': None,
     'io': None,
     'random': None,
-    'datetime': None
+    'datetime': None,
+    'mediapipe': None
 }
 
 def get_import(name: str) -> Any:
@@ -43,6 +45,9 @@ def get_import(name: str) -> Any:
         elif name == 'datetime':
             from datetime import datetime
             _imports[name] = datetime
+        elif name == 'mediapipe':
+            import mediapipe as mp
+            _imports[name] = mp
     return _imports[name]
 
 sys.path.append(os.getcwd()+'/src/')
@@ -50,6 +55,18 @@ from vocal_coaching_rag import generate_rag_critique
 
 USER_DATA_FILE = os.getcwd()+"/src/users.json"
 JOURNAL_DATA_FILE = os.getcwd()+"/src/journal.json"
+
+# At the top of the file, before any function definitions
+if video_image is None:
+    video_image = ft.Image(
+        src="https://via.placeholder.com/600x400?text=No+Video",
+        width=600,
+        height=400,
+        fit=ft.ImageFit.CONTAIN,
+        gapless_playback=True,
+        repeat=ft.ImageRepeat.NO_REPEAT,
+        animate_opacity=ft.Animation(300, "easeInOut"),
+    )
 
 # --- User and Journal Data Management ---
 # Cache user data with a timeout of 5 minutes
@@ -79,6 +96,169 @@ def save_journal(journal):
         json.dump(journal, f)
     # Clear the cache after saving
     load_journal.cache_clear()
+
+def get_available_cameras() -> List[int]:
+    """Get list of available camera indices (robust)"""
+    cv2 = get_import('cv2')
+    cameras = []
+    for i in range(10):
+        cap = cv2.VideoCapture(i)
+        if cap.isOpened():
+            cameras.append(i)
+        cap.release()
+    return cameras
+
+def process_frame(frame, processing_options: Dict[str, bool] = None) -> Tuple[Any, Dict[str, Any]]:
+    """
+    Process video frame with various options
+    Returns processed frame and metadata
+    """
+    if processing_options is None:
+        processing_options = {
+            'grayscale': False,
+            'flip': False,
+            'detect_face': False,
+            'detect_pose': False
+        }
+    
+    cv2 = get_import('cv2')
+    metadata = {}
+    
+    # Basic processing
+    if processing_options.get('grayscale'):
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2RGB)
+    
+    if processing_options.get('flip'):
+        frame = cv2.flip(frame, 1)
+    
+    # Advanced processing with MediaPipe
+    if processing_options.get('detect_face') or processing_options.get('detect_pose'):
+        mp = get_import('mediapipe')
+        
+        if processing_options.get('detect_face'):
+            face_mesh = mp.solutions.face_mesh.FaceMesh(
+                max_num_faces=1,
+                refine_landmarks=True,
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
+            results = face_mesh.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            if results.multi_face_landmarks:
+                metadata['face_detected'] = True
+                # Draw face landmarks
+                for face_landmarks in results.multi_face_landmarks:
+                    for landmark in face_landmarks.landmark:
+                        x, y = int(landmark.x * frame.shape[1]), int(landmark.y * frame.shape[0])
+                        cv2.circle(frame, (x, y), 1, (0, 255, 0), -1)
+            else:
+                metadata['face_detected'] = False
+        
+        if processing_options.get('detect_pose'):
+            pose = mp.solutions.pose.Pose(
+                min_detection_confidence=0.5,
+                min_tracking_confidence=0.5
+            )
+            results = pose.process(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            if results.pose_landmarks:
+                metadata['pose_detected'] = True
+                # Draw pose landmarks
+                mp.solutions.drawing_utils.draw_landmarks(
+                    frame,
+                    results.pose_landmarks,
+                    mp.solutions.pose.POSE_CONNECTIONS
+                )
+            else:
+                metadata['pose_detected'] = False
+    
+    return frame, metadata
+
+def update_video_image_from_frame(frame, video_image):
+    cv2 = get_import('cv2')
+    PIL = get_import('PIL')
+    io = get_import('io')
+    base64 = get_import('base64')
+    frame = cv2.resize(frame, (640, 480))
+    img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    pil_img = PIL.fromarray(img)
+    buf = io.BytesIO()
+    pil_img.save(buf, format='PNG')
+    data = buf.getvalue()
+    b64str = base64.b64encode(data).decode()
+    video_image.src_base64 = b64str
+    video_image.update()
+
+def camera_loop(selected_camera_index, processing_options, stop_camera_event, video_image, feedback_text_area):
+    cv2 = get_import('cv2')
+    try:
+        cap = cv2.VideoCapture(selected_camera_index)
+        if not cap.isOpened():
+            raise Exception(f"Could not open camera {selected_camera_index}")
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FPS, 15)
+        frame_count = 0
+        start_time = time.time()
+        while not stop_camera_event.is_set():
+            ret, frame = cap.read()
+            if not ret:
+                print("Failed to read frame from camera!")
+                continue
+            processed_frame, metadata = process_frame(frame, processing_options)
+            frame_count += 1
+            if frame_count % 30 == 0:
+                end_time = time.time()
+                fps = frame_count / (end_time - start_time)
+                metadata['fps'] = round(fps, 1)
+                frame_count = 0
+                start_time = time.time()
+            try:
+                update_video_image_from_frame(processed_frame, video_image)
+                if metadata.get('face_detected') is not None:
+                    feedback_text_area.value = f"Face detected: {metadata['face_detected']}"
+                    feedback_text_area.update()
+            except Exception as ex:
+                print("Exception in update_video_image_from_frame:", ex)
+            time.sleep(0.06)
+    except Exception as e:
+        print(f"Camera error: {str(e)}")
+        feedback_text_area.value = f"Camera error: {str(e)}"
+        feedback_text_area.update()
+    finally:
+        if 'cap' in locals():
+            cap.release()
+
+def start_camera(selected_camera_index, processing_options, stop_camera_event, video_image, feedback_text_area, camera_active_ref, camera_thread_ref):
+    if camera_active_ref[0]:
+        return
+    try:
+        cv2 = get_import('cv2')
+        cap = cv2.VideoCapture(selected_camera_index)
+        if not cap.isOpened():
+            feedback_text_area.value = f"Error: Could not access camera {selected_camera_index}"
+            feedback_text_area.update()
+            return
+        cap.release()
+        stop_camera_event.clear()
+        thread = threading.Thread(target=camera_loop, args=(selected_camera_index, processing_options, stop_camera_event, video_image, feedback_text_area), daemon=True)
+        thread.start()
+        camera_thread_ref[0] = thread
+        camera_active_ref[0] = True
+        feedback_text_area.value = f"Camera {selected_camera_index} started."
+        feedback_text_area.update()
+    except Exception as e:
+        feedback_text_area.value = f"Error starting camera: {str(e)}"
+        feedback_text_area.update()
+
+def stop_camera(stop_camera_event, camera_active_ref, video_image, feedback_text_area):
+    if camera_active_ref[0]:
+        stop_camera_event.set()
+        camera_active_ref[0] = False
+        feedback_text_area.value = "Camera stopped."
+        feedback_text_area.update()
+        video_image.src = "https://via.placeholder.com/600x400?text=No+Video"
+        video_image.src_base64 = None
+        video_image.update()
 
 def main(page: ft.Page):
     page.title = "Voxure - AI Vocal Coach"
@@ -167,37 +347,36 @@ def main(page: ft.Page):
         update_ui_safely.last_updates[control_id] = current_time
 
     def update_video_image_from_frame(frame):
-        # Use centralized imports
         cv2 = get_import('cv2')
         PIL = get_import('PIL')
         io = get_import('io')
         base64 = get_import('base64')
-        
-        # Resize frame to reduce memory usage
         frame = cv2.resize(frame, (640, 480))
-        
         img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        pil_img = PIL.Image.fromarray(img)
-        
-        # Optimize image quality and size
+        pil_img = PIL.fromarray(img)
         buf = io.BytesIO()
-        pil_img.save(buf, format='JPEG', quality=85, optimize=True)
+        pil_img.save(buf, format='PNG')
         data = buf.getvalue()
-        
-        # Update image with fade effect using safe update
-        update_ui_safely(video_image, opacity=0)
-        update_ui_safely(video_image, src_base64=base64.b64encode(data).decode())
-        update_ui_safely(video_image, opacity=1)
+        b64str = base64.b64encode(data).decode()
+        video_image.src_base64 = b64str
+        video_image.update()
 
     # Start gradient animation in a background thread
     threading.Thread(target=lambda: animate_gradient(False), daemon=True).start()
 
-    # State
-    camera_active = False
-    camera_thread = None
+    # Enhanced camera state
+    camera_active_ref = [False]
+    camera_thread_ref = [None]
     stop_camera_event = threading.Event()
     uploaded_video_path = None
     last_frame_bytes = None
+    selected_camera_index = 0
+    processing_options = {
+        'grayscale': False,
+        'flip': False,
+        'detect_face': False,
+        'detect_pose': False
+    }
     page.session.set("selected_user", None)
     page.session.set("selected_journal_entry", None)
     page.overlay.clear()
@@ -260,16 +439,6 @@ def main(page: ft.Page):
     page.overlay.append(file_picker) # Add file picker to page overlay
 
     # --- Placeholder for Video Display ---
-    video_image = ft.Image(
-        src="https://via.placeholder.com/600x400?text=No+Video",
-        width=600,
-        height=400,
-        fit=ft.ImageFit.CONTAIN,
-        gapless_playback=True,  # Enable gapless playback
-        repeat=ft.ImageRepeat.NO_REPEAT,  # Prevent image repetition
-        animate_opacity=ft.Animation(300, "easeInOut"),  # Smooth opacity transitions
-    )
-    
     video_display_area = ft.Container(
         content=video_image,
         expand=True,
@@ -339,44 +508,36 @@ def main(page: ft.Page):
         )
         e.control.update()
 
-    def camera_loop():
-        # Use centralized imports
-        cv2 = get_import('cv2')
-        
-        cap = cv2.VideoCapture(0)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 15)
-        
-        while not stop_camera_event.is_set():
-            ret, frame = cap.read()
-            if not ret:
-                continue
-            update_video_image_from_frame(frame)
-            time.sleep(0.06)  # ~15 FPS
-        cap.release()
+    def on_camera_change(e):
+        nonlocal selected_camera_index
+        selected_camera_index = int(e.control.value)
+        stop_camera(stop_camera_event, camera_active_ref, video_image, feedback_text_area)
+        start_camera(selected_camera_index, processing_options, stop_camera_event, video_image, feedback_text_area, camera_active_ref, camera_thread_ref)
 
-    def start_camera(e=None):
-        nonlocal camera_active, camera_thread
-        if camera_active:
-            return
-        stop_camera_event.clear()
-        camera_thread = threading.Thread(target=camera_loop, daemon=True)
-        camera_thread.start()
-        feedback_text_area.value = "Camera started."
-        feedback_text_area.update()
-        camera_active = True
+    # Add camera selection dropdown
+    available_cameras = get_available_cameras()
+    if selected_camera_index not in available_cameras and available_cameras:
+        selected_camera_index = available_cameras[0]
+    camera_dropdown = ft.Dropdown(
+        label="Select Camera",
+        options=[ft.dropdown.Option(str(i), f"Camera {i}") for i in available_cameras],
+        value=str(selected_camera_index),
+        width=200,
+        on_change=on_camera_change
+    )
 
-    def stop_camera():
-        nonlocal camera_active
-        if camera_active:
-            stop_camera_event.set()
-            camera_active = False
-            feedback_text_area.value = "Camera stopped."
-            feedback_text_area.update()
-            video_image.src = "https://via.placeholder.com/600x400?text=No+Video"
-            video_image.src_base64 = None
-            video_image.update()
+    # Add processing options
+    processing_controls = ft.Column([
+        ft.Text("Processing Options", size=16, weight=ft.FontWeight.BOLD),
+        ft.Checkbox(label="Grayscale", value=processing_options['grayscale'],
+                   on_change=lambda e: setattr(processing_options, 'grayscale', e.control.value)),
+        ft.Checkbox(label="Flip Horizontal", value=processing_options['flip'],
+                   on_change=lambda e: setattr(processing_options, 'flip', e.control.value)),
+        ft.Checkbox(label="Detect Face", value=processing_options['detect_face'],
+                   on_change=lambda e: setattr(processing_options, 'detect_face', e.control.value)),
+        ft.Checkbox(label="Detect Pose", value=processing_options['detect_pose'],
+                   on_change=lambda e: setattr(processing_options, 'detect_pose', e.control.value)),
+    ])
 
     # --- Action Buttons ---
     btn_start_camera = ft.ElevatedButton(
@@ -389,7 +550,7 @@ def main(page: ft.Page):
             shape=ft.RoundedRectangleBorder(radius=8),
             padding=15
         ),
-        on_click=start_camera,
+        on_click=lambda e: start_camera(selected_camera_index, processing_options, stop_camera_event, video_image, feedback_text_area, camera_active_ref, camera_thread_ref),
         on_hover=on_hover_animation,
         scale=ft.Scale(1),
         animate_scale=ft.Animation(300, "easeOutCubic")
@@ -404,7 +565,7 @@ def main(page: ft.Page):
             shape=ft.RoundedRectangleBorder(radius=8),
             padding=15
         ),
-        on_click=lambda e: stop_camera(),
+        on_click=lambda e: stop_camera(stop_camera_event, camera_active_ref, video_image, feedback_text_area),
         on_hover=on_hover_animation,
         scale=ft.Scale(1),
         animate_scale=ft.Animation(300, "easeOutCubic")
@@ -419,7 +580,7 @@ def main(page: ft.Page):
             shape=ft.RoundedRectangleBorder(radius=8),
             padding=15
         ),
-        on_click=start_camera,  # For now, just start camera
+        on_click=lambda e: start_camera(selected_camera_index, processing_options, stop_camera_event, video_image, feedback_text_area, camera_active_ref, camera_thread_ref),
         on_hover=on_hover_animation,
         scale=ft.Scale(1),
         animate_scale=ft.Animation(300, "easeOutCubic")
@@ -1102,35 +1263,135 @@ def main(page: ft.Page):
 
     # --- Recording Screen ---
     def recording_screen():
-        # Placeholder for video capture and controls
-        genre_dd = ft.Dropdown(label="Genre", options=[ft.dropdown.Option(x) for x in ["Pop", "Rock", "Jazz", "Classical", "Broadway", "Alternative"]])
-        pitch_dd = ft.Dropdown(label="Pitch", options=[ft.dropdown.Option(x) for x in ["Low", "Medium", "High"]])
-        scale_dd = ft.Dropdown(label="Scale", options=[ft.dropdown.Option(x) for x in ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']])
-        singer_dd = ft.Dropdown(label="Singer Type", options=[ft.dropdown.Option(x) for x in ["Soprano", "Alto", "Tenor", "Bass"]])
-        record_btn = ft.ElevatedButton("Record", icon=ft.Icons.FIBER_MANUAL_RECORD, on_click=lambda e: show_critique_panel())
-        pause_btn = ft.ElevatedButton("Pause/Resume", icon=ft.Icons.PAUSE, on_click=lambda e: show_critique_panel())
-        stop_btn = ft.ElevatedButton("Stop", icon=ft.Icons.STOP, on_click=lambda e: page.go("/summary"))
-        controls = ft.Row([record_btn, pause_btn, stop_btn], alignment=ft.MainAxisAlignment.CENTER, spacing=20)
-        video_placeholder = ft.Container(
-            content=ft.Image(src="https://via.placeholder.com/400x300?text=Video+Capture", width=400, height=300),
-            alignment=ft.alignment.center,
-            bgcolor="#23272F",
-            border_radius=10,
-            padding=10
+        # Local state for camera
+        camera_active_ref = [False]
+        camera_thread_ref = [None]
+        stop_camera_event = threading.Event()
+        selected_camera_index = 0
+        processing_options = {
+            'grayscale': False,
+            'flip': False,
+            'detect_face': False,
+            'detect_pose': False
+        }
+        available_cameras = get_available_cameras()
+        if selected_camera_index not in available_cameras and available_cameras:
+            selected_camera_index = available_cameras[0]
+        video_image = ft.Image(
+            src="https://via.placeholder.com/600x400?text=No+Video",
+            width=600,
+            height=400,
+            fit=ft.ImageFit.CONTAIN,
+            gapless_playback=True,
+            repeat=ft.ImageRepeat.NO_REPEAT,
+            animate_opacity=ft.Animation(300, "easeInOut"),
         )
-        dropdowns = ft.Row([genre_dd, pitch_dd, scale_dd, singer_dd], alignment=ft.MainAxisAlignment.CENTER, spacing=20)
+        feedback_text_area = ft.Text(
+            "Camera feedback will appear here...",
+            size=14,
+            italic=True,
+            color="#5f6368"
+        )
+        # Add genre, vocalist type, and vocal range dropdowns
+        genre_dd = ft.Dropdown(
+            label="Genre",
+            options=[ft.dropdown.Option(x) for x in ["Pop", "Rock", "Jazz", "Classical", "Broadway", "Alternative"]],
+            width=200
+        )
+        vocalist_dd = ft.Dropdown(
+            label="Vocalist Type",
+            options=[ft.dropdown.Option(x) for x in ["Lead Vocalist", "Backing Vocalist", "Chorus Singer"]],
+            width=200
+        )
+        range_dd = ft.Dropdown(
+            label="Vocal Range",
+            options=[ft.dropdown.Option(x) for x in ["Soprano", "Mezzo-Soprano", "Alto", "Tenor", "Baritone", "Bass"]],
+            width=200
+        )
+        dropdown_row = ft.Row([genre_dd, vocalist_dd, range_dd], alignment=ft.MainAxisAlignment.CENTER, spacing=20)
+        def on_camera_change(e):
+            nonlocal selected_camera_index
+            selected_camera_index = int(e.control.value)
+            stop_camera(stop_camera_event, camera_active_ref, video_image, feedback_text_area)
+            start_camera(selected_camera_index, processing_options, stop_camera_event, video_image, feedback_text_area, camera_active_ref, camera_thread_ref)
+        camera_dropdown = ft.Dropdown(
+            label="Select Camera",
+            options=[ft.dropdown.Option(str(i), f"Camera {i}") for i in available_cameras],
+            value=str(selected_camera_index),
+            width=200,
+            on_change=on_camera_change
+        )
+        def on_processing_change(opt):
+            def handler(e):
+                processing_options[opt] = e.control.value
+            return handler
+        processing_controls = ft.Column([
+            ft.Text("Processing Options", size=16, weight=ft.FontWeight.BOLD),
+            ft.Checkbox(label="Grayscale", value=processing_options['grayscale'], on_change=on_processing_change('grayscale')),
+            ft.Checkbox(label="Flip Horizontal", value=processing_options['flip'], on_change=on_processing_change('flip')),
+            ft.Checkbox(label="Detect Face", value=processing_options['detect_face'], on_change=on_processing_change('detect_face')),
+            ft.Checkbox(label="Detect Pose", value=processing_options['detect_pose'], on_change=on_processing_change('detect_pose')),
+        ])
+        def on_start_camera(e):
+            start_camera(selected_camera_index, processing_options, stop_camera_event, video_image, feedback_text_area, camera_active_ref, camera_thread_ref)
+        def on_stop_camera(e):
+            stop_camera(stop_camera_event, camera_active_ref, video_image, feedback_text_area)
+        btn_start_camera = ft.ElevatedButton(
+            text="Start Camera",
+            icon=ft.Icons.VIDEO_CAMERA_FRONT,
+            width=180,
+            style=ft.ButtonStyle(
+                color=ft.Colors.WHITE,
+                bgcolor=ft.Colors.BLUE_ACCENT_700,
+                shape=ft.RoundedRectangleBorder(radius=8),
+                padding=15
+            ),
+            on_click=on_start_camera,
+            scale=ft.Scale(1),
+            animate_scale=ft.Animation(300, "easeOutCubic")
+        )
+        btn_stop_camera = ft.ElevatedButton(
+            text="Stop Camera",
+            icon=ft.Icons.STOP_CIRCLE_OUTLINED,
+            width=180,
+            style=ft.ButtonStyle(
+                color=ft.Colors.WHITE,
+                bgcolor=ft.Colors.RED_ACCENT_700,
+                shape=ft.RoundedRectangleBorder(radius=8),
+                padding=15
+            ),
+            on_click=on_stop_camera,
+            scale=ft.Scale(1),
+            animate_scale=ft.Animation(300, "easeOutCubic")
+        )
+        btn_start_analysis = ft.ElevatedButton(
+            text="Start Real-time Analysis",
+            icon=ft.Icons.PLAY_CIRCLE_OUTLINE,
+            width=250,
+            style=ft.ButtonStyle(
+                color=ft.Colors.WHITE,
+                bgcolor=ft.Colors.LIGHT_BLUE_ACCENT_700,
+                shape=ft.RoundedRectangleBorder(radius=8),
+                padding=15
+            ),
+            on_click=on_start_camera,
+            scale=ft.Scale(1),
+            animate_scale=ft.Animation(300, "easeOutCubic")
+        )
         return ft.View(
             "/record",
             controls=[
                 ft.Container(
                     content=ft.Column([
-                        video_placeholder,
-                        dropdowns,
-                        controls
+                        dropdown_row,
+                        video_image,
+                        feedback_text_area,
+                        ft.Row([camera_dropdown, processing_controls], alignment=ft.MainAxisAlignment.CENTER, spacing=20),
+                        ft.Row([btn_start_camera, btn_stop_camera, btn_start_analysis], alignment=ft.MainAxisAlignment.CENTER, spacing=20)
                     ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True),
                     expand=True,
                     bgcolor=None,
-                    gradient=static_gradient  # Use static gradient
+                    gradient=static_gradient
                 )
             ]
         )
